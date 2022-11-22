@@ -3,6 +3,7 @@ package cliargs
 import "core:reflect"
 import "core:log"
 import "core:strconv"
+import "core:strings"
 import "core:unicode/utf8"
 
 val_type :: union {
@@ -36,7 +37,8 @@ cmd_or_arg :: union {
 }
 
 argparse :: struct {
-	items: []cmd_or_arg,
+	target: any,
+	items:  []cmd_or_arg,
 }
 
 build_command_parser :: proc(
@@ -56,10 +58,12 @@ build_command_parser :: proc(
 				name := string(reflect.struct_tag_get(reflect.Struct_Tag(src.tags[i]), "cmd"))
 				if name != "" {
 					c := cmd {
-						name = name,
-						description = string(reflect.struct_tag_get(reflect.Struct_Tag(src.tags[i]), "description")),
-						type = elem,
-						offset = src.offsets[i],
+						name        = name,
+						description = string(
+							reflect.struct_tag_get(reflect.Struct_Tag(src.tags[i]), "description"),
+						),
+						type        = elem,
+						offset      = src.offsets[i],
 					}
 					ok = build_command_parser(&c, elem)
 					if !ok {
@@ -74,7 +78,12 @@ build_command_parser :: proc(
 				// TBD
 				panic("not implemented")
 			case:
-				ok = build_arg_parser(&items, src.types[i], reflect.Struct_Tag(src.tags[i]), src.offsets[i])
+				ok = build_arg_parser(
+					&items,
+					src.types[i],
+					reflect.Struct_Tag(src.tags[i]),
+					src.offsets[i],
+				)
 				if !ok {
 					return
 				}
@@ -176,10 +185,12 @@ build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocat
 				name := string(reflect.struct_tag_get(reflect.Struct_Tag(s.tags[i]), "cmd"))
 				if name != "" {
 					c := cmd {
-						name = name,
-						description = string(reflect.struct_tag_get(reflect.Struct_Tag(s.tags[i]), "description")),
-						type = elem,
-						offset = s.offsets[i],
+						name        = name,
+						description = string(
+							reflect.struct_tag_get(reflect.Struct_Tag(s.tags[i]), "description"),
+						),
+						type        = elem,
+						offset      = s.offsets[i],
 					}
 					ok = build_command_parser(&c, elem)
 					if !ok {
@@ -194,7 +205,12 @@ build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocat
 				// TBD
 				panic("not implemented")
 			case:
-				ok = build_arg_parser(&items, s.types[i], reflect.Struct_Tag(s.tags[i]), s.offsets[i])
+				ok = build_arg_parser(
+					&items,
+					s.types[i],
+					reflect.Struct_Tag(s.tags[i]),
+					s.offsets[i],
+				)
 				if !ok {
 					return
 				}
@@ -205,6 +221,61 @@ build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocat
 	parser.items = items[:]
 
 	return
+}
+
+init_parser :: proc(parser: ^argparse, S: $T, allocator := context.allocator) -> (ok: bool) {
+	build_parser(parser, T) or_return
+	parser.target = S
+}
+
+@private
+find_short :: proc(short: string, cmd_or_arg: []cmd_or_arg) -> (result: ^arg) {
+	for v, i in cmd_or_arg {
+		if e, ok := v.(arg); ok {
+			if e.short == short do return &cmd_or_arg[i].(arg)
+		}
+	}
+	return nil
+}
+
+@private
+find_long :: proc(long: string, cmd_or_arg: []cmd_or_arg) -> (result: ^arg) {
+	for v, i in cmd_or_arg {
+		if e, ok := v.(arg); ok {
+			if e.long == long do return &cmd_or_arg[i].(arg)
+		}
+	}
+	return nil
+}
+
+@private
+find_cmd :: proc(name: string, cmd_or_arg: []cmd_or_arg) -> (result: ^cmd) {
+	for v, i in cmd_or_arg {
+		if e, ok := v.(cmd); ok {
+			if e.name == name do return &cmd_or_arg[i].(cmd)
+		}
+	}
+	return nil
+}
+
+parse_into_struct :: proc(target: any, cmd_or_arg: []cmd_or_arg, remaining: []string) -> (ok: bool) {
+	// TODO: Need to make a pass to set defaults first.
+	for v, i in remaining {
+		switch {
+		case strings.has_prefix(v, "--"):
+			a := find_long(v[2:], cmd_or_arg)
+			if a == nil {
+				log.errorf("error: unrecognized flag: %s", v)
+				return false
+			}
+		case strings.has_prefix(v, "-"):
+		}
+	}
+}
+
+parse :: proc(parser: ^argparse, args: []string) -> (ok: bool) {
+
+	return false
 }
 
 @(private)

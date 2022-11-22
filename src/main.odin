@@ -19,7 +19,7 @@ main :: proc() {
 	  } `cmd:"foocmd"`,
 	}
 	parser: cliargs.argparse
-	cliargs.init_parser(&parser, &y)
+	cliargs.build_parser(&parser, type_of(&y))
 
 	fmt.printf("rt: %v\n", parser)
 }
