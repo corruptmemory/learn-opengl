@@ -35,7 +35,7 @@ cmd_or_arg :: union {
 	cmd,
 }
 
-root :: struct {
+argparse :: struct {
 	items: []cmd_or_arg,
 }
 
@@ -153,7 +153,7 @@ build_arg_parser :: proc(
 }
 
 
-build_root_parser :: proc($T: typeid, r: ^root, allocator := context.allocator) -> (ok: bool) {
+build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocator) -> (ok: bool) {
 	ti := type_info_of(T)
 	ok = true
 	p: reflect.Type_Info_Pointer
@@ -202,7 +202,7 @@ build_root_parser :: proc($T: typeid, r: ^root, allocator := context.allocator) 
 		}
 	}
 
-	r.items = items[:]
+	parser.items = items[:]
 
 	return
 }

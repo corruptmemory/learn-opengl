@@ -15,11 +15,11 @@ main :: proc() {
 	  e: struct {
 	  	x: bool,
 	  	y: bool `short:"y"`,
-	  	z: string `short:"z" required:"true"`
+	  	z: string `short:"z" required:"true"`,
 	  } `cmd:"foocmd"`,
 	}
-	rt: cliargs.root
-	cliargs.build_root_parser(type_of(&y), &rt)
+	parser: cliargs.argparse
+	cliargs.init_parser(&parser, &y)
 
-	fmt.printf("rt: %v\n", rt)
+	fmt.printf("rt: %v\n", parser)
 }
