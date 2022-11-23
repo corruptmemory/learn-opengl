@@ -19,14 +19,14 @@ arg :: struct {
 	description: string,
 	required:    bool,
 	default:     val_type,
-	type:        ^reflect.Type_Info,
+	type:        typeid,
 	offset:      uintptr,
 }
 
 cmd :: struct {
 	name:        string,
 	description: string,
-	type:        reflect.Type_Info_Struct,
+	type:        typeid,
 	offset:      uintptr,
 	items:       []cmd_or_arg,
 }
@@ -41,20 +41,20 @@ argparse :: struct {
 	items:  []cmd_or_arg,
 }
 
-build_command_parser :: proc(
-	target: ^cmd,
-	src: reflect.Type_Info_Struct,
-	allocator := context.allocator,
-) -> (
-	ok: bool,
-) {
+build_command_parser :: proc(target: ^cmd, S: typeid, allocator := context.allocator) -> bool {
+	ti := reflect.type_info_base(type_info_of(S))
+	src, ok := ti.variant.(reflect.Type_Info_Struct)
+	if !ok {
+		log.errorf("error: command not associated with a structure")
+		return false
+	}
 	items := make([dynamic]cmd_or_arg, 0, len(src.names))
-
 	for i := 0; i < len(src.names); i += 1 {
-		tag := src.tags[i]
-		if len(tag) > 0 {
-			#partial switch elem in src.types[i].variant {
-			case reflect.Type_Info_Struct:
+		field := reflect.struct_field_at(S, i)
+		if len(field.tag) > 0 {
+			k := reflect.type_kind(field.type.id)
+			#partial switch k {
+			case .Struct:
 				name := string(reflect.struct_tag_get(reflect.Struct_Tag(src.tags[i]), "cmd"))
 				if name != "" {
 					c := cmd {
@@ -62,31 +62,20 @@ build_command_parser :: proc(
 						description = string(
 							reflect.struct_tag_get(reflect.Struct_Tag(src.tags[i]), "description"),
 						),
-						type        = elem,
-						offset      = src.offsets[i],
+						type        = field.type.id,
+						offset      = field.offset,
 					}
-					ok = build_command_parser(&c, elem)
-					if !ok {
-						return
-					}
+					build_command_parser(&c, field.type.id) or_return
 					append(&items, c)
 				}
-			case reflect.Type_Info_Array:
+			case .Array:
 				// TBD
 				panic("not implemented")
-			case reflect.Type_Info_Slice:
+			case .Slice:
 				// TBD
 				panic("not implemented")
 			case:
-				ok = build_arg_parser(
-					&items,
-					src.types[i],
-					reflect.Struct_Tag(src.tags[i]),
-					src.offsets[i],
-				)
-				if !ok {
-					return
-				}
+				build_arg_parser(&items, field, k, allocator) or_return
 			}
 		}
 	}
@@ -96,131 +85,124 @@ build_command_parser :: proc(
 
 build_arg_parser :: proc(
 	collection: ^[dynamic]cmd_or_arg,
-	src: ^reflect.Type_Info,
-	tag: reflect.Struct_Tag,
-	offset: uintptr,
+	field: reflect.Struct_Field,
+	kind: reflect.Type_Kind,
 	allocator := context.allocator,
 ) -> (
 	ok: bool,
 ) {
-	target := arg{}
-	#partial switch elem in src.variant {
-	case reflect.Type_Info_Pointer:
-		if ok = build_arg_parser(collection, elem.elem, tag, offset); !ok {
-			return
+	k := kind
+	target := arg {
+		short       = string(reflect.struct_tag_get(field.tag, "short")),
+		long        = string(reflect.struct_tag_get(field.tag, "long")),
+		description = string(reflect.struct_tag_get(field.tag, "description")),
+		type        = field.type.id,
+		offset      = field.offset,
+	}
+	if target.short == "" && target.long == "" do return true
+
+	required := string(reflect.struct_tag_get(field.tag, "required"))
+	if required != "" {
+		r: bool
+		if r, ok = strconv.parse_bool(required); !ok {
+			log.errorf("error: could not parse '%s' into a boolean (for required)", required)
+			return false
 		}
-		target.type = src
-	case reflect.Type_Info_Integer, reflect.Type_Info_Rune, reflect.Type_Info_Float, reflect.Type_Info_String, reflect.Type_Info_Boolean:
-		target.short = string(reflect.struct_tag_get(tag, "short"))
-		target.long = string(reflect.struct_tag_get(tag, "long"))
-		if target.short == "" && target.long == "" {
-			return true
+		target.required = r
+	}
+	if k == .Pointer {
+		ptr_info := field.type.variant.(reflect.Type_Info_Pointer)
+		k = reflect.type_kind(ptr_info.elem.id)
+		#partial switch k {
+		case .Integer, .Float, .String, .Boolean, .Rune:
+		case:
+			log.errorf(
+				"error: cannot process an argument that is a pointer to %v",
+				ptr_info.elem.id,
+			)
+			return false
 		}
-		target.description = string(reflect.struct_tag_get(tag, "description"))
-		target.type = src
-		target.offset = offset
-		target.required = false
-		required := string(reflect.struct_tag_get(tag, "required"))
-		if required != "" {
-			r: bool
-			if r, ok = strconv.parse_bool(required); !ok {
-				log.errorf("error: could not parse '%s' into a boolean (for required)", required)
-				return false
-			}
-			target.required = r
-		}
-		default := string(reflect.struct_tag_get(tag, "default"))
+	}
+	#partial switch k {
+	case .Integer, .Float, .String, .Boolean, .Rune:
+		default := string(reflect.struct_tag_get(field.tag, "default"))
 		if default != "" {
-			#partial switch in elem {
-			case reflect.Type_Info_Integer:
+			#partial switch k {
+			case .Integer:
 				d: i128
 				if d, ok = strconv.parse_i128(default); !ok {
 					log.errorf("error: could not parse '%s' into an integer", default)
 					return false
 				}
 				target.default = d
-			case reflect.Type_Info_Rune:
+			case .Rune:
 				target.default, _ = utf8.decode_rune(default)
-			case reflect.Type_Info_Float:
+			case .Float:
 				d: f64
 				if d, ok = strconv.parse_f64(default); !ok {
 					log.errorf("error: could not parse '%s' into a floating point number", default)
 					return false
 				}
 				target.default = d
-			case reflect.Type_Info_String:
+			case .String:
 				// I think this works and is safe
 				target.default = default
 			}
 		}
-		append(collection, target)
 	case:
-		log.errorf("error: no support for the '%v' type", src)
+		log.errorf("error: no support for the '%v' type", field.type)
 		return false
 	}
+	append(collection, target)
 	return true
 }
 
 
 build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocator) -> (ok: bool) {
-	ti := type_info_of(T)
-	ok = true
+	ti := reflect.type_info_base(type_info_of(T))
 	p: reflect.Type_Info_Pointer
 	if p, ok = ti.variant.(reflect.Type_Info_Pointer); !ok {
-		log.errorf("Error: input '%v' not a pointer", typeid_of(T))
+		log.errorf("Error: input '%v' not a pointer", T)
 		return
 	}
 	s: reflect.Type_Info_Struct
 	if s, ok = p.elem.variant.(reflect.Type_Info_Struct); !ok {
-		log.errorf("Error: input '%v' not a pointer to struct", p.elem)
+		log.errorf("Error: input '%v' not a pointer to struct", p.elem.id)
 		return
 	}
 	items := make([dynamic]cmd_or_arg, 0, len(s.names))
 
 	for i := 0; i < len(s.names); i += 1 {
-		tag := s.tags[i]
-		if len(tag) > 0 {
-			#partial switch elem in s.types[i].variant {
-			case reflect.Type_Info_Struct:
-				name := string(reflect.struct_tag_get(reflect.Struct_Tag(s.tags[i]), "cmd"))
+		field := reflect.struct_field_at(p.elem.id, i)
+		if len(field.tag) > 0 {
+			k := reflect.type_kind(field.type.id)
+			#partial switch k {
+			case .Struct:
+				name := string(reflect.struct_tag_get(field.tag, "cmd"))
 				if name != "" {
 					c := cmd {
 						name        = name,
-						description = string(
-							reflect.struct_tag_get(reflect.Struct_Tag(s.tags[i]), "description"),
-						),
-						type        = elem,
-						offset      = s.offsets[i],
+						description = string(reflect.struct_tag_get(field.tag, "description")),
+						type        = field.type.id,
+						offset      = field.offset,
 					}
-					ok = build_command_parser(&c, elem)
-					if !ok {
-						return
-					}
+					build_command_parser(&c, field.type.id, allocator) or_return
 					append(&items, c)
 				}
-			case reflect.Type_Info_Array:
+			case .Array:
 				// TBD
 				panic("not implemented")
-			case reflect.Type_Info_Slice:
+			case .Slice:
 				// TBD
 				panic("not implemented")
 			case:
-				ok = build_arg_parser(
-					&items,
-					s.types[i],
-					reflect.Struct_Tag(s.tags[i]),
-					s.offsets[i],
-				)
-				if !ok {
-					return
-				}
+				build_arg_parser(&items, field, k, allocator) or_return
 			}
 		}
 	}
 
 	parser.items = items[:]
-
-	return
+	return true
 }
 
 init_parser :: proc(parser: ^argparse, S: $T, allocator := context.allocator) -> (ok: bool) {
@@ -228,7 +210,7 @@ init_parser :: proc(parser: ^argparse, S: $T, allocator := context.allocator) ->
 	parser.target = S
 }
 
-@private
+@(private)
 find_short :: proc(short: string, cmd_or_arg: []cmd_or_arg) -> (result: ^arg) {
 	for v, i in cmd_or_arg {
 		if e, ok := v.(arg); ok {
@@ -238,7 +220,7 @@ find_short :: proc(short: string, cmd_or_arg: []cmd_or_arg) -> (result: ^arg) {
 	return nil
 }
 
-@private
+@(private)
 find_long :: proc(long: string, cmd_or_arg: []cmd_or_arg) -> (result: ^arg) {
 	for v, i in cmd_or_arg {
 		if e, ok := v.(arg); ok {
@@ -248,7 +230,7 @@ find_long :: proc(long: string, cmd_or_arg: []cmd_or_arg) -> (result: ^arg) {
 	return nil
 }
 
-@private
+@(private)
 find_cmd :: proc(name: string, cmd_or_arg: []cmd_or_arg) -> (result: ^cmd) {
 	for v, i in cmd_or_arg {
 		if e, ok := v.(cmd); ok {
@@ -258,19 +240,77 @@ find_cmd :: proc(name: string, cmd_or_arg: []cmd_or_arg) -> (result: ^cmd) {
 	return nil
 }
 
-parse_into_struct :: proc(target: any, cmd_or_arg: []cmd_or_arg, remaining: []string) -> (ok: bool) {
-	// TODO: Need to make a pass to set defaults first.
-	for v, i in remaining {
-		switch {
-		case strings.has_prefix(v, "--"):
-			a := find_long(v[2:], cmd_or_arg)
-			if a == nil {
-				log.errorf("error: unrecognized flag: %s", v)
-				return false
-			}
-		case strings.has_prefix(v, "-"):
+could_not_parse :: proc(arg, val, expected: string) -> bool {
+	log.errorf("could not parse (%s) argument for %s: %s", expected, arg, val)
+	return false
+}
+
+consume_arg :: proc(kind: reflect.Type_Kind, target: any, arg, val: string) -> bool {
+	#partial switch kind {
+	case .Integer:
+		v, ok := strconv.parse_i128(val)
+		if !ok do return could_not_parse(arg, val, "i128")
+		return assign_int(target, v)
+	case .Float:
+		v, ok := strconv.parse_f64(val)
+		if !ok do return could_not_parse(arg, val, "f64")
+		return assign_float(target, v)
+	case .String:
+		v := reflect.any_core(val)
+		switch dst in &v {
+		case string:
+			dst = val
+		case:
+			return false
 		}
 	}
+	return true
+}
+
+parse_into_struct :: proc(
+	target: any,
+	cmd_or_arg: []cmd_or_arg,
+	remaining: []string,
+) -> (
+	ok: bool,
+) {
+	// TODO: Need to make a pass to set defaults first.
+	r := remaining
+	for len(r) > 0 {
+		v := r[0]
+		a: ^arg
+		switch {
+		case strings.has_prefix(v, "--"):
+			a = find_long(v[2:], cmd_or_arg)
+		case strings.has_prefix(v, "-"):
+			a = find_short(v[1:], cmd_or_arg)
+		case:
+			c := find_cmd(v, cmd_or_arg)
+			if c == nil {
+				log.errorf("error: unrecognized command: %s", v)
+				return false
+			}
+			data := any{(^rawptr)(uintptr(target.data) + c.offset)^, c.type}
+			return parse_into_struct(data, c.items, r[1:])
+		}
+		if a == nil {
+			log.errorf("error: unrecognized flag: %s", v)
+			return false
+		}
+		k := reflect.type_kind(a.type)
+		data := any{(^rawptr)(uintptr(target.data) + a.offset)^, a.type}
+		#partial switch k {
+		case .Integer, .Float, .String, .Rune:
+			if len(r) == 1 {
+				log.errorf("error: no value supplied for %s", v)
+				return false
+			}
+			consume_arg(k, data, v, r[1]) or_return
+		case .Boolean:
+			assign_bool(data, true)
+		}
+	}
+	return true
 }
 
 parse :: proc(parser: ^argparse, args: []string) -> (ok: bool) {
