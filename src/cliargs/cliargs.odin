@@ -5,6 +5,7 @@ import "core:log"
 import "core:strconv"
 import "core:strings"
 import "core:unicode/utf8"
+import "core:intrinsics"
 
 val_type :: union {
 	i128,
@@ -34,11 +35,6 @@ cmd :: struct {
 cmd_or_arg :: union {
 	arg,
 	cmd,
-}
-
-argparse :: struct {
-	target: any,
-	items:  []cmd_or_arg,
 }
 
 build_command_parser :: proc(target: ^cmd, S: typeid, allocator := context.allocator) -> bool {
@@ -98,6 +94,7 @@ build_arg_parser :: proc(
 		description = string(reflect.struct_tag_get(field.tag, "description")),
 		type        = field.type.id,
 		offset      = field.offset,
+		default     = nil,
 	}
 	if target.short == "" && target.long == "" do return true
 
@@ -158,22 +155,21 @@ build_arg_parser :: proc(
 }
 
 
-build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocator) -> (ok: bool) {
+build_parser :: proc(
+	$T: typeid,
+	allocator := context.allocator,
+) -> (
+	result: []cmd_or_arg,
+	ok: bool,
+) {
 	ti := reflect.type_info_base(type_info_of(T))
-	p: reflect.Type_Info_Pointer
-	if p, ok = ti.variant.(reflect.Type_Info_Pointer); !ok {
-		log.errorf("Error: input '%v' not a pointer", T)
-		return
-	}
 	s: reflect.Type_Info_Struct
-	if s, ok = p.elem.variant.(reflect.Type_Info_Struct); !ok {
-		log.errorf("Error: input '%v' not a pointer to struct", p.elem.id)
-		return
-	}
+	s, _ = ti.variant.(reflect.Type_Info_Struct)
 	items := make([dynamic]cmd_or_arg, 0, len(s.names))
+	defer if !ok do delete(items)
 
 	for i := 0; i < len(s.names); i += 1 {
-		field := reflect.struct_field_at(p.elem.id, i)
+		field := reflect.struct_field_at(ti.id, i)
 		if len(field.tag) > 0 {
 			k := reflect.type_kind(field.type.id)
 			#partial switch k {
@@ -186,7 +182,8 @@ build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocat
 						type        = field.type.id,
 						offset      = field.offset,
 					}
-					build_command_parser(&c, field.type.id, allocator) or_return
+					ok = build_command_parser(&c, field.type.id, allocator)
+					if !ok do return
 					append(&items, c)
 				}
 			case .Array:
@@ -196,18 +193,13 @@ build_parser :: proc(parser: ^argparse, $T: typeid, allocator := context.allocat
 				// TBD
 				panic("not implemented")
 			case:
-				build_arg_parser(&items, field, k, allocator) or_return
+				ok = build_arg_parser(&items, field, k, allocator)
+				if !ok do return
 			}
 		}
 	}
 
-	parser.items = items[:]
-	return true
-}
-
-init_parser :: proc(parser: ^argparse, S: $T, allocator := context.allocator) -> (ok: bool) {
-	build_parser(parser, T) or_return
-	parser.target = S
+	return items[:], true
 }
 
 @(private)
@@ -256,12 +248,28 @@ consume_arg :: proc(kind: reflect.Type_Kind, target: any, arg, val: string) -> b
 		if !ok do return could_not_parse(arg, val, "f64")
 		return assign_float(target, v)
 	case .String:
-		v := reflect.any_core(val)
-		switch dst in &v {
-		case string:
-			dst = val
-		case:
-			return false
+		return assign_string(target, val)
+	case .Rune:
+		return assign_rune(target, val)
+	}
+	return true
+}
+
+assign_defaults :: proc(target: any, cmd_or_arg: []cmd_or_arg) -> bool {
+	for v in cmd_or_arg {
+		if e, ok := v.(arg); ok {
+			t := any{(rawptr)(uintptr(target.data) + e.offset), e.type}
+			if e.default == nil do continue
+			switch dv in e.default {
+			case i128:
+				assign_int(t, dv) or_return
+			case f64:
+				assign_float(t, dv) or_return
+			case string:
+				assign_string(t, dv) or_return
+			case rune:
+				assign_rune(t, dv) or_return
+			}
 		}
 	}
 	return true
@@ -274,7 +282,7 @@ parse_into_struct :: proc(
 ) -> (
 	ok: bool,
 ) {
-	// TODO: Need to make a pass to set defaults first.
+	assign_defaults(target, cmd_or_arg)
 	r := remaining
 	for len(r) > 0 {
 		v := r[0]
@@ -290,7 +298,7 @@ parse_into_struct :: proc(
 				log.errorf("error: unrecognized command: %s", v)
 				return false
 			}
-			data := any{(^rawptr)(uintptr(target.data) + c.offset)^, c.type}
+			data := any{(rawptr)(uintptr(target.data) + c.offset), c.type}
 			return parse_into_struct(data, c.items, r[1:])
 		}
 		if a == nil {
@@ -298,7 +306,7 @@ parse_into_struct :: proc(
 			return false
 		}
 		k := reflect.type_kind(a.type)
-		data := any{(^rawptr)(uintptr(target.data) + a.offset)^, a.type}
+		data := any{(rawptr)(uintptr(target.data) + a.offset), a.type}
 		#partial switch k {
 		case .Integer, .Float, .String, .Rune:
 			if len(r) == 1 {
@@ -306,16 +314,33 @@ parse_into_struct :: proc(
 				return false
 			}
 			consume_arg(k, data, v, r[1]) or_return
+			log.infof("data %v", data)
+			log.infof("data.data %v", data.data)
+			r = r[2:]
 		case .Boolean:
 			assign_bool(data, true)
+			r = r[1:]
 		}
 	}
 	return true
 }
 
-parse :: proc(parser: ^argparse, args: []string) -> (ok: bool) {
-
-	return false
+parse_args :: proc(
+	program_name: string,
+	description: string,
+	target: $T/^$E,
+	args: []string,
+	allocator := context.temp_allocator,
+) -> (
+	ok: bool,
+) where intrinsics.type_is_struct(E) {
+	context.allocator = allocator
+	coa: []cmd_or_arg
+	coa, ok = build_parser(E, allocator)
+	log.infof("target: %v", target)
+	if !ok do return
+	t := any{(rawptr)(uintptr(target)), typeid_of(T)}
+	return parse_into_struct(t, coa, args)
 }
 
 @(private)
@@ -443,6 +468,48 @@ assign_float :: proc(val: any, f: $T) -> bool {
 	case quaternion256:
 		dst = quaternion(f64(f), 0, 0, 0)
 
+	case:
+		return false
+	}
+	return true
+}
+
+@(private)
+assign_string :: proc(val: any, f: string) -> bool {
+	v := reflect.any_core(val)
+	switch dst in &v {
+	case string:
+		dst = f
+	case:
+		return false
+	}
+	return true
+}
+
+@(private)
+get_rune_from_string :: proc(thing: string) -> rune {
+	r, _ := utf8.decode_rune_in_string(thing)
+	return r
+}
+
+@(private)
+get_rune_from_rune :: proc(thing: rune) -> rune {
+	return thing
+}
+
+@(private)
+get_rune :: proc {
+	get_rune_from_string,
+	get_rune_from_rune,
+}
+
+
+@(private)
+assign_rune :: proc(val: any, f: $T) -> bool {
+	v := reflect.any_core(val)
+	switch dst in &v {
+	case rune:
+		dst = get_rune(f)
 	case:
 		return false
 	}
