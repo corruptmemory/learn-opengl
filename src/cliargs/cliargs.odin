@@ -9,20 +9,163 @@ import "core:strings"
 import "core:unicode/utf8"
 import "core:intrinsics"
 
+Flags :: enum {
+	Help,
+}
 
 Parser :: struct {
-	data: [dynamic]byte,
-	arena: mem.Arena,
-	allocator: runtime.Allocator,
+	data:         [dynamic]byte,
+	arena:        mem.Arena,
+	allocator:    runtime.Allocator,
 	program_name: string,
-	description: string,
-	errors: [dynamic]string,
+	description:  string,
+	flags:        bit_set[Flags],
+	cmd_or_arg:   []cmd_or_arg,
+	command_path: [dynamic]^cmd,
+	errors:       [dynamic]string,
 }
+
+Parse_Result :: enum {
+	Success = 0,
+	Failure,
+	Help,
+}
+
+parse_args :: proc(
+	parser: ^Parser,
+	target: $T/^$E,
+	args: []string,
+) -> (
+	result: Parse_Result,
+) where intrinsics.type_is_struct(E) {
+	context.allocator = parser.allocator
+	ok := build_parser(parser, E)
+	if !ok do return .Failure
+	t := any{(rawptr)(uintptr(target)), typeid_of(T)}
+	return parse_into_struct(parser, t, parser.cmd_or_arg, args, nil)
+}
+
+parser_init :: proc(
+	parser: ^Parser,
+	program_name, description: string,
+	flags := bit_set[Flags]{.Help},
+	size: int = 16384,
+	allocator := context.allocator,
+) {
+	parser.data = make([dynamic]byte, size, allocator)
+	mem.arena_init(&parser.arena, parser.data[:])
+	parser.allocator = mem.arena_allocator(&parser.arena)
+	parser.program_name = program_name
+	parser.description = description
+	parser.flags = flags
+}
+
+parser_destroy :: proc(parser: ^Parser) {
+	free_all(parser.allocator)
+	delete(parser.data)
+	parser.data = nil
+	parser.allocator = mem.nil_allocator()
+}
+
+print_help :: proc(parser: ^Parser) {
+	context.allocator = context.temp_allocator
+	fmt.printf("%s\n     %s\n\n", parser.program_name, parser.description)
+	fmt.printf("USAGE: %s", parser.program_name)
+	for e in parser.command_path {
+		fmt.printf(" %s", e.name)
+	}
+	args: [dynamic]^arg
+	if parser.command_path == nil {
+		for i := 0; i < len(parser.cmd_or_arg); i += 1 {
+			if a, ok := &parser.cmd_or_arg[i].(arg); ok {
+				append(&args, a)
+			}
+		}
+	} else {
+		c := parser.command_path[len(parser.command_path) - 1]
+		for i := 0; i < len(c.items); i += 1 {
+			if a, ok := &c.items[i].(arg); ok {
+				append(&args, a)
+			}
+		}
+	}
+
+	for a in args {
+		fmt.print(" ")
+		if !a.required {
+			fmt.print("[")
+		}
+		switch {
+		case a.short != "" && a.long != "":
+			fmt.printf("%s%s|%s%s", SHORT_PREFIX, a.short, LONG_PREFIX, a.long)
+		case a.short != "" && a.long == "":
+			fmt.printf("%s%s", SHORT_PREFIX, a.short)
+		case a.short == "" && a.long != "":
+			fmt.printf("%s%s", LONG_PREFIX, a.long)
+		}
+		#partial switch reflect.type_kind(a.type) {
+		case .Integer:
+			fmt.print(" <INTEGER>")
+		case .Float:
+			fmt.print(" <FLOAT>")
+		case .String:
+			fmt.print(" <STRING>")
+		case .Rune:
+			fmt.print(" <CHARACTER>")
+		}
+		if !a.required {
+			fmt.print("]")
+		}
+	}
+	fmt.println()
+	if len(args) > 0 {
+		builder: strings.Builder
+		strings.builder_init(&builder)
+		fmt.println("\nDetails:")
+		for a in args {
+			strings.builder_reset(&builder)
+			as: string
+			desc := a.description
+			def: string
+			if !a.required do fmt.sbprint(&builder, "[")
+			switch {
+			case a.short != "" && a.long != "":
+				fmt.sbprintf(&builder, "%s%s|%s%s", SHORT_PREFIX, a.short, LONG_PREFIX, a.long)
+			case a.short != "" && a.long == "":
+				fmt.sbprintf(&builder, "%s%s", SHORT_PREFIX, a.short)
+			case a.short == "" && a.long != "":
+				fmt.sbprintf(&builder, "%s%s", LONG_PREFIX, a.long)
+			}
+			#partial switch reflect.type_kind(a.type) {
+			case .Integer:
+				fmt.sbprint(&builder, " <INTEGER>")
+			case .Float:
+				fmt.sbprint(&builder, " <FLOAT>")
+			case .String:
+				fmt.sbprint(&builder, " <STRING>")
+			case .Rune:
+				fmt.sbprint(&builder, " <CHARACTER>")
+			}
+			if !a.required do fmt.sbprint(&builder, "]")
+			as = strings.clone(strings.to_string(builder))
+			strings.builder_reset(&builder)
+			if a.default != nil do def = strings.clone(fmt.sbprintf(&builder, " [DEFAULT: %v]", a.default))
+			fmt.printf("  %-30s%s%s\n", as, desc, def)
+		}
+	}
+
+	free_all(context.temp_allocator)
+}
+
 
 @(private)
 LONG_PREFIX :: "--"
 @(private)
 SHORT_PREFIX :: "-"
+@(private)
+SHORT_HELP_FLAG :: SHORT_PREFIX + "h"
+@(private)
+LONG_HELP_FLAG :: LONG_PREFIX + "help"
 
 @(private)
 val_type :: union {
@@ -57,21 +200,6 @@ cmd :: struct {
 cmd_or_arg :: union {
 	arg,
 	cmd,
-}
-
-parser_init :: proc(parser: ^Parser, program_name, description: string, size: int = 16384,allocator := context.allocator) {
-	parser.data = make([dynamic]byte, size, allocator)
-	mem.arena_init(&parser.arena, parser.data[:])
-	parser.allocator = mem.arena_allocator(&parser.arena)
-	parser.program_name = program_name
-	parser.description = description
-}
-
-parser_destroy :: proc(parser: ^Parser) {
-	free_all(parser.allocator)
-	delete(parser.data)
-	parser.data = nil
-	parser.allocator = mem.nil_allocator()
 }
 
 @(private)
@@ -142,7 +270,10 @@ build_arg_parser :: proc(
 	if required != "" {
 		r: bool
 		if r, ok = strconv.parse_bool(required); !ok {
-			append(&parser.errors, fmt.aprintf("could not parse '%s' into a boolean (for required)", required))
+			append(
+				&parser.errors,
+				fmt.aprintf("could not parse '%s' into a boolean (for required)", required),
+			)
 			return false
 		}
 		target.required = r
@@ -153,7 +284,13 @@ build_arg_parser :: proc(
 		#partial switch k {
 		case .Integer, .Float, .String, .Boolean, .Rune:
 		case:
-			append(&parser.errors, fmt.aprintf("cannot process an argument that is a pointer to %v", ptr_info.elem.id))
+			append(
+				&parser.errors,
+				fmt.aprintf(
+					"cannot process an argument that is a pointer to %v",
+					ptr_info.elem.id,
+				),
+			)
 			return false
 		}
 	}
@@ -165,7 +302,10 @@ build_arg_parser :: proc(
 			case .Integer:
 				d: i128
 				if d, ok = strconv.parse_i128(default); !ok {
-					append(&parser.errors, fmt.aprintf("could not parse '%s' into an integer", default))
+					append(
+						&parser.errors,
+						fmt.aprintf("could not parse '%s' into an integer", default),
+					)
 					return false
 				}
 				target.default = d
@@ -174,12 +314,14 @@ build_arg_parser :: proc(
 			case .Float:
 				d: f64
 				if d, ok = strconv.parse_f64(default); !ok {
-					append(&parser.errors, fmt.aprintf("could not parse '%s' into a floating point number", default))
+					append(
+						&parser.errors,
+						fmt.aprintf("could not parse '%s' into a floating point number", default),
+					)
 					return false
 				}
 				target.default = d
 			case .String:
-				// I think this works and is safe
 				target.default = default
 			}
 		}
@@ -192,7 +334,7 @@ build_arg_parser :: proc(
 }
 
 @(private)
-build_parser :: proc(parser: ^Parser, $T: typeid) -> (result: []cmd_or_arg, ok: bool) {
+build_parser :: proc(parser: ^Parser, $T: typeid) -> (ok: bool) {
 	ti := reflect.type_info_base(type_info_of(T))
 	s: reflect.Type_Info_Struct
 	s, _ = ti.variant.(reflect.Type_Info_Struct)
@@ -230,7 +372,8 @@ build_parser :: proc(parser: ^Parser, $T: typeid) -> (result: []cmd_or_arg, ok: 
 		}
 	}
 
-	return items[:], true
+	parser.cmd_or_arg = items[:]
+	return true
 }
 
 @(private)
@@ -265,12 +408,20 @@ find_cmd :: proc(name: string, cmd_or_arg: []cmd_or_arg) -> (result: ^cmd) {
 
 @(private)
 could_not_parse :: proc(parser: ^Parser, arg, val, expected: string) -> bool {
-	append(&parser.errors, fmt.aprintf("could not parse (%s) argument for %s: %s", expected, arg, val))
+	append(
+		&parser.errors,
+		fmt.aprintf("could not parse (%s) argument for %s: %s", expected, arg, val),
+	)
 	return false
 }
 
 @(private)
-consume_arg :: proc(parser: ^Parser, kind: reflect.Type_Kind, target: any, arg, val: string) -> bool {
+consume_arg :: proc(
+	parser: ^Parser,
+	kind: reflect.Type_Kind,
+	target: any,
+	arg, val: string,
+) -> bool {
 	#partial switch kind {
 	case .Integer:
 		v, ok := strconv.parse_i128(val)
@@ -313,19 +464,32 @@ assign_defaults :: proc(target: any, cmd_or_arg: []cmd_or_arg) -> bool {
 }
 
 @(private)
-check_required :: proc(parser: ^Parser, cmd_or_arg: []cmd_or_arg) -> (result: bool) {
-	result = true
+check_required :: proc(parser: ^Parser, cmd_or_arg: []cmd_or_arg) -> (result: Parse_Result) {
+	result = .Success
 	for v in cmd_or_arg {
 		if e, ok := v.(arg); ok {
 			if !e.assigned && e.required {
 				n := strings.concatenate([]string{SHORT_PREFIX, e.short})
 				if e.long != "" do n = strings.concatenate([]string{LONG_PREFIX, e.long})
 				append(&parser.errors, fmt.aprintf("missing required argument: %s", n))
-				result = false
+				result = .Failure
 			}
 		}
 	}
 	return result
+}
+
+@(private)
+is_help_flag :: proc(parser: ^Parser, arg: string) -> bool {
+	if .Help in parser.flags {
+		switch arg {
+		case SHORT_HELP_FLAG, LONG_HELP_FLAG:
+			return true
+		case:
+			return false
+		}
+	}
+	return false
 }
 
 @(private)
@@ -334,15 +498,21 @@ parse_into_struct :: proc(
 	target: any,
 	cmd_or_arg: []cmd_or_arg,
 	remaining: []string,
+	current_command: ^cmd,
 ) -> (
-	ok: bool,
+	result: Parse_Result,
 ) {
+	if current_command != nil {
+		append(&parser.command_path, current_command)
+	}
 	assign_defaults(target, cmd_or_arg)
 	r := remaining
 	for len(r) > 0 {
 		v := r[0]
 		a: ^arg
 		switch {
+		case is_help_flag(parser, v):
+			return .Help
 		case strings.has_prefix(v, LONG_PREFIX):
 			a = find_long(v[2:], cmd_or_arg)
 		case strings.has_prefix(v, SHORT_PREFIX):
@@ -351,14 +521,14 @@ parse_into_struct :: proc(
 			c := find_cmd(v, cmd_or_arg)
 			if c == nil {
 				append(&parser.errors, fmt.aprintf("unrecognized command: %s", v))
-				return false
+				return .Failure
 			}
 			data := any{(rawptr)(uintptr(target.data) + c.offset), c.type}
-			return parse_into_struct(parser, data, c.items, r[1:])
+			return parse_into_struct(parser, data, c.items, r[1:], c)
 		}
 		if a == nil {
 			append(&parser.errors, fmt.aprintf("unrecognized flag: %s", v))
-			return false
+			return .Failure
 		}
 		k := reflect.type_kind(a.type)
 		data := any{(rawptr)(uintptr(target.data) + a.offset), a.type}
@@ -366,10 +536,10 @@ parse_into_struct :: proc(
 		case .Integer, .Float, .String, .Rune:
 			if len(r) == 1 {
 				append(&parser.errors, fmt.aprintf("no value supplied for %s", v))
-				return false
+				return .Failure
 			}
 			a.assigned = consume_arg(parser, k, data, v, r[1])
-			if !a.assigned do return
+			if !a.assigned do return .Failure
 			r = r[2:]
 		case .Boolean:
 			a.assigned = true
@@ -380,20 +550,6 @@ parse_into_struct :: proc(
 	return check_required(parser, cmd_or_arg)
 }
 
-parse_args :: proc(
-	parser: ^Parser,
-	target: $T/^$E,
-	args: []string,
-) -> (
-	ok: bool,
-) where intrinsics.type_is_struct(E) {
-	context.allocator = parser.allocator
-	coa: []cmd_or_arg
-	coa, ok = build_parser(parser, E)
-	if !ok do return
-	t := any{(rawptr)(uintptr(target)), typeid_of(T)}
-	return parse_into_struct(parser, t, coa, args)
-}
 
 @(private)
 assign_bool :: proc(val: any, b: bool) -> bool {

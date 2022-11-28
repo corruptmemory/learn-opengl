@@ -15,8 +15,8 @@ main :: proc() {
 		d1: f32 `short:"D" long:"d1-arg" description:"This is D1 argument" default:"3.14159"`,
 		e:  struct {
 			x: bool,
-			y: bool `short:"y"`,
-			z: string `short:"z" required:"true"`,
+			y: bool `short:"y" description:"The Y flag"`,
+			z: string `short:"z" required:"true" description:"Z GERMANS!"`,
 		} `cmd:"foocmd"`,
 		f:  string `long:"f-arg" description:"This is the F argument" default:"f-arg"`,
 		g:  rune `long:"g-arg" description:"This is the G argument" default:"G"`,
@@ -25,15 +25,19 @@ main :: proc() {
 	parser: cliargs.Parser
 	cliargs.parser_init(&parser, "test", "test cli parsing")
 	defer cliargs.parser_destroy(&parser)
-	if !cliargs.parse_args(
+	#partial switch cliargs.parse_args(
 		   &parser,
 		   &y,
-		   []string{"-a", "hello", "-c", "999", "foocmd", "-y",  "-z", "Z arg, eh?"},
+		   []string{"-a", "hello", "-c", "999", "foocmd", "-y",  "-z", "Z arg, eh?", "-h"},
 	   ) {
-	   	for e in parser.errors {
-	   		log.error(e)
-	   	}
-	   	return
+	   	case .Failure:
+		   	for e in parser.errors {
+		   		log.error(e)
+		   	}
+		   	return
+		case .Help:
+			cliargs.print_help(&parser)
+			return
 	}
 	fmt.printf("y: %v\n", &y)
 	fmt.printf("&y: %p\n", &y)
