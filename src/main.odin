@@ -22,13 +22,19 @@ main :: proc() {
 		g:  rune `long:"g-arg" description:"This is the G argument" default:"G"`,
 	}
 
-	if cliargs.parse_args(
-		   "test",
-		   "testing things",
+	parser: cliargs.Parser
+	cliargs.parser_init(&parser, "test", "test cli parsing")
+	defer cliargs.parser_destroy(&parser)
+	if !cliargs.parse_args(
+		   &parser,
 		   &y,
-		   []string{"-a", "hello", "-c", "999", "foocmd", "-y", "-D", "2.000"},
+		   []string{"-a", "hello", "-c", "999", "foocmd", "-y",  "-z", "Z arg, eh?"},
 	   ) {
-		fmt.printf("y: %v\n", &y)
-		fmt.printf("&y: %p\n", &y)
+	   	for e in parser.errors {
+	   		log.error(e)
+	   	}
+	   	return
 	}
+	fmt.printf("y: %v\n", &y)
+	fmt.printf("&y: %p\n", &y)
 }

@@ -1,12 +1,30 @@
 package cliargs
 
 import "core:reflect"
-import "core:log"
+import "core:runtime"
 import "core:strconv"
+import "core:mem"
+import "core:fmt"
 import "core:strings"
 import "core:unicode/utf8"
 import "core:intrinsics"
 
+
+Parser :: struct {
+	data: [dynamic]byte,
+	arena: mem.Arena,
+	allocator: runtime.Allocator,
+	program_name: string,
+	description: string,
+	errors: [dynamic]string,
+}
+
+@(private)
+LONG_PREFIX :: "--"
+@(private)
+SHORT_PREFIX :: "-"
+
+@(private)
 val_type :: union {
 	i128,
 	f64,
@@ -14,16 +32,19 @@ val_type :: union {
 	rune,
 }
 
+@(private)
 arg :: struct {
 	long:        string,
 	short:       string,
 	description: string,
 	required:    bool,
+	assigned:    bool,
 	default:     val_type,
 	type:        typeid,
 	offset:      uintptr,
 }
 
+@(private)
 cmd :: struct {
 	name:        string,
 	description: string,
@@ -32,16 +53,33 @@ cmd :: struct {
 	items:       []cmd_or_arg,
 }
 
+@(private)
 cmd_or_arg :: union {
 	arg,
 	cmd,
 }
 
-build_command_parser :: proc(target: ^cmd, S: typeid, allocator := context.allocator) -> bool {
+parser_init :: proc(parser: ^Parser, program_name, description: string, size: int = 16384,allocator := context.allocator) {
+	parser.data = make([dynamic]byte, size, allocator)
+	mem.arena_init(&parser.arena, parser.data[:])
+	parser.allocator = mem.arena_allocator(&parser.arena)
+	parser.program_name = program_name
+	parser.description = description
+}
+
+parser_destroy :: proc(parser: ^Parser) {
+	free_all(parser.allocator)
+	delete(parser.data)
+	parser.data = nil
+	parser.allocator = mem.nil_allocator()
+}
+
+@(private)
+build_command_parser :: proc(parser: ^Parser, target: ^cmd, S: typeid) -> bool {
 	ti := reflect.type_info_base(type_info_of(S))
 	src, ok := ti.variant.(reflect.Type_Info_Struct)
 	if !ok {
-		log.errorf("error: command not associated with a structure")
+		append(&parser.errors, "command not associated with a structure")
 		return false
 	}
 	items := make([dynamic]cmd_or_arg, 0, len(src.names))
@@ -61,7 +99,7 @@ build_command_parser :: proc(target: ^cmd, S: typeid, allocator := context.alloc
 						type        = field.type.id,
 						offset      = field.offset,
 					}
-					build_command_parser(&c, field.type.id) or_return
+					build_command_parser(parser, &c, field.type.id) or_return
 					append(&items, c)
 				}
 			case .Array:
@@ -71,7 +109,7 @@ build_command_parser :: proc(target: ^cmd, S: typeid, allocator := context.alloc
 				// TBD
 				panic("not implemented")
 			case:
-				build_arg_parser(&items, field, k, allocator) or_return
+				build_arg_parser(parser, &items, field, k) or_return
 			}
 		}
 	}
@@ -79,7 +117,9 @@ build_command_parser :: proc(target: ^cmd, S: typeid, allocator := context.alloc
 	return true
 }
 
+@(private)
 build_arg_parser :: proc(
+	parser: ^Parser,
 	collection: ^[dynamic]cmd_or_arg,
 	field: reflect.Struct_Field,
 	kind: reflect.Type_Kind,
@@ -102,7 +142,7 @@ build_arg_parser :: proc(
 	if required != "" {
 		r: bool
 		if r, ok = strconv.parse_bool(required); !ok {
-			log.errorf("error: could not parse '%s' into a boolean (for required)", required)
+			append(&parser.errors, fmt.aprintf("could not parse '%s' into a boolean (for required)", required))
 			return false
 		}
 		target.required = r
@@ -113,10 +153,7 @@ build_arg_parser :: proc(
 		#partial switch k {
 		case .Integer, .Float, .String, .Boolean, .Rune:
 		case:
-			log.errorf(
-				"error: cannot process an argument that is a pointer to %v",
-				ptr_info.elem.id,
-			)
+			append(&parser.errors, fmt.aprintf("cannot process an argument that is a pointer to %v", ptr_info.elem.id))
 			return false
 		}
 	}
@@ -128,7 +165,7 @@ build_arg_parser :: proc(
 			case .Integer:
 				d: i128
 				if d, ok = strconv.parse_i128(default); !ok {
-					log.errorf("error: could not parse '%s' into an integer", default)
+					append(&parser.errors, fmt.aprintf("could not parse '%s' into an integer", default))
 					return false
 				}
 				target.default = d
@@ -137,7 +174,7 @@ build_arg_parser :: proc(
 			case .Float:
 				d: f64
 				if d, ok = strconv.parse_f64(default); !ok {
-					log.errorf("error: could not parse '%s' into a floating point number", default)
+					append(&parser.errors, fmt.aprintf("could not parse '%s' into a floating point number", default))
 					return false
 				}
 				target.default = d
@@ -147,21 +184,15 @@ build_arg_parser :: proc(
 			}
 		}
 	case:
-		log.errorf("error: no support for the '%v' type", field.type)
+		append(&parser.errors, fmt.aprintf("no support for the '%v' type", field.type))
 		return false
 	}
 	append(collection, target)
 	return true
 }
 
-
-build_parser :: proc(
-	$T: typeid,
-	allocator := context.allocator,
-) -> (
-	result: []cmd_or_arg,
-	ok: bool,
-) {
+@(private)
+build_parser :: proc(parser: ^Parser, $T: typeid) -> (result: []cmd_or_arg, ok: bool) {
 	ti := reflect.type_info_base(type_info_of(T))
 	s: reflect.Type_Info_Struct
 	s, _ = ti.variant.(reflect.Type_Info_Struct)
@@ -182,7 +213,7 @@ build_parser :: proc(
 						type        = field.type.id,
 						offset      = field.offset,
 					}
-					ok = build_command_parser(&c, field.type.id, allocator)
+					ok = build_command_parser(parser, &c, field.type.id)
 					if !ok do return
 					append(&items, c)
 				}
@@ -193,7 +224,7 @@ build_parser :: proc(
 				// TBD
 				panic("not implemented")
 			case:
-				ok = build_arg_parser(&items, field, k, allocator)
+				ok = build_arg_parser(parser, &items, field, k)
 				if !ok do return
 			}
 		}
@@ -232,20 +263,22 @@ find_cmd :: proc(name: string, cmd_or_arg: []cmd_or_arg) -> (result: ^cmd) {
 	return nil
 }
 
-could_not_parse :: proc(arg, val, expected: string) -> bool {
-	log.errorf("could not parse (%s) argument for %s: %s", expected, arg, val)
+@(private)
+could_not_parse :: proc(parser: ^Parser, arg, val, expected: string) -> bool {
+	append(&parser.errors, fmt.aprintf("could not parse (%s) argument for %s: %s", expected, arg, val))
 	return false
 }
 
-consume_arg :: proc(kind: reflect.Type_Kind, target: any, arg, val: string) -> bool {
+@(private)
+consume_arg :: proc(parser: ^Parser, kind: reflect.Type_Kind, target: any, arg, val: string) -> bool {
 	#partial switch kind {
 	case .Integer:
 		v, ok := strconv.parse_i128(val)
-		if !ok do return could_not_parse(arg, val, "i128")
+		if !ok do return could_not_parse(parser, arg, val, "i128")
 		return assign_int(target, v)
 	case .Float:
 		v, ok := strconv.parse_f64(val)
-		if !ok do return could_not_parse(arg, val, "f64")
+		if !ok do return could_not_parse(parser, arg, val, "f64")
 		return assign_float(target, v)
 	case .String:
 		return assign_string(target, val)
@@ -255,27 +288,49 @@ consume_arg :: proc(kind: reflect.Type_Kind, target: any, arg, val: string) -> b
 	return true
 }
 
+@(private)
 assign_defaults :: proc(target: any, cmd_or_arg: []cmd_or_arg) -> bool {
-	for v in cmd_or_arg {
-		if e, ok := v.(arg); ok {
+	for i := 0; i < len(cmd_or_arg); i += 1 {
+		if e, ok := &cmd_or_arg[i].(arg); ok {
 			t := any{(rawptr)(uintptr(target.data) + e.offset), e.type}
 			if e.default == nil do continue
+			assigned := false
 			switch dv in e.default {
 			case i128:
-				assign_int(t, dv) or_return
+				assigned = assign_int(t, dv)
 			case f64:
-				assign_float(t, dv) or_return
+				assigned = assign_float(t, dv)
 			case string:
-				assign_string(t, dv) or_return
+				assigned = assign_string(t, dv)
 			case rune:
-				assign_rune(t, dv) or_return
+				assigned = assign_rune(t, dv)
 			}
+			e.assigned = assigned
+			if !assigned do return false
 		}
 	}
 	return true
 }
 
+@(private)
+check_required :: proc(parser: ^Parser, cmd_or_arg: []cmd_or_arg) -> (result: bool) {
+	result = true
+	for v in cmd_or_arg {
+		if e, ok := v.(arg); ok {
+			if !e.assigned && e.required {
+				n := strings.concatenate([]string{SHORT_PREFIX, e.short})
+				if e.long != "" do n = strings.concatenate([]string{LONG_PREFIX, e.long})
+				append(&parser.errors, fmt.aprintf("missing required argument: %s", n))
+				result = false
+			}
+		}
+	}
+	return result
+}
+
+@(private)
 parse_into_struct :: proc(
+	parser: ^Parser,
 	target: any,
 	cmd_or_arg: []cmd_or_arg,
 	remaining: []string,
@@ -288,21 +343,21 @@ parse_into_struct :: proc(
 		v := r[0]
 		a: ^arg
 		switch {
-		case strings.has_prefix(v, "--"):
+		case strings.has_prefix(v, LONG_PREFIX):
 			a = find_long(v[2:], cmd_or_arg)
-		case strings.has_prefix(v, "-"):
+		case strings.has_prefix(v, SHORT_PREFIX):
 			a = find_short(v[1:], cmd_or_arg)
 		case:
 			c := find_cmd(v, cmd_or_arg)
 			if c == nil {
-				log.errorf("error: unrecognized command: %s", v)
+				append(&parser.errors, fmt.aprintf("unrecognized command: %s", v))
 				return false
 			}
 			data := any{(rawptr)(uintptr(target.data) + c.offset), c.type}
-			return parse_into_struct(data, c.items, r[1:])
+			return parse_into_struct(parser, data, c.items, r[1:])
 		}
 		if a == nil {
-			log.errorf("error: unrecognized flag: %s", v)
+			append(&parser.errors, fmt.aprintf("unrecognized flag: %s", v))
 			return false
 		}
 		k := reflect.type_kind(a.type)
@@ -310,37 +365,34 @@ parse_into_struct :: proc(
 		#partial switch k {
 		case .Integer, .Float, .String, .Rune:
 			if len(r) == 1 {
-				log.errorf("error: no value supplied for %s", v)
+				append(&parser.errors, fmt.aprintf("no value supplied for %s", v))
 				return false
 			}
-			consume_arg(k, data, v, r[1]) or_return
-			log.infof("data %v", data)
-			log.infof("data.data %v", data.data)
+			a.assigned = consume_arg(parser, k, data, v, r[1])
+			if !a.assigned do return
 			r = r[2:]
 		case .Boolean:
+			a.assigned = true
 			assign_bool(data, true)
 			r = r[1:]
 		}
 	}
-	return true
+	return check_required(parser, cmd_or_arg)
 }
 
 parse_args :: proc(
-	program_name: string,
-	description: string,
+	parser: ^Parser,
 	target: $T/^$E,
 	args: []string,
-	allocator := context.temp_allocator,
 ) -> (
 	ok: bool,
 ) where intrinsics.type_is_struct(E) {
-	context.allocator = allocator
+	context.allocator = parser.allocator
 	coa: []cmd_or_arg
-	coa, ok = build_parser(E, allocator)
-	log.infof("target: %v", target)
+	coa, ok = build_parser(parser, E)
 	if !ok do return
 	t := any{(rawptr)(uintptr(target)), typeid_of(T)}
-	return parse_into_struct(t, coa, args)
+	return parse_into_struct(parser, t, coa, args)
 }
 
 @(private)
