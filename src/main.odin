@@ -4,6 +4,11 @@ import "core:fmt"
 import "core:log"
 import "cliargs"
 
+goober :: struct {
+	fuzbarz: string `short:"F" long:"fuzbarz" description:"Pass in the fuzbarz value"`,
+	glorbo: f64 `short:"G" long:"glorbo" description:"The glorbo, pleaze"`,
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 	// x: int
@@ -20,6 +25,7 @@ main :: proc() {
 		} `cmd:"foocmd"`,
 		f:  string `long:"f-arg" description:"This is the F argument" default:"f-arg"`,
 		g:  rune `long:"g-arg" description:"This is the G argument" default:"G"`,
+		goober: goober `cmd:"goober" description:"The goober command"`,
 	}
 
 	parser: cliargs.Parser
@@ -28,7 +34,7 @@ main :: proc() {
 	#partial switch cliargs.parse_args(
 		   &parser,
 		   &y,
-		   []string{"-a", "hello", "-c", "999", "foocmd", "-y",  "-z", "Z arg, eh?", "-h"},
+		   []string{"-a", "hello", "-c", "999", "goober", "-h"},
 	   ) {
 	   	case .Failure:
 		   	for e in parser.errors {

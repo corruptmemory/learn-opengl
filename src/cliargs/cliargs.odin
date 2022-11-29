@@ -344,7 +344,7 @@ build_parser :: proc(parser: ^Parser, $T: typeid) -> (ok: bool) {
 	for i := 0; i < len(s.names); i += 1 {
 		field := reflect.struct_field_at(ti.id, i)
 		if len(field.tag) > 0 {
-			k := reflect.type_kind(field.type.id)
+			k := reflect.type_kind(reflect.typeid_core(field.type.id))
 			#partial switch k {
 			case .Struct:
 				name := string(reflect.struct_tag_get(field.tag, "cmd"))
