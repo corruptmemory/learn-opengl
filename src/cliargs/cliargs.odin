@@ -69,23 +69,31 @@ parser_destroy :: proc(parser: ^Parser) {
 
 print_help :: proc(parser: ^Parser) {
 	context.allocator = context.temp_allocator
+	defer free_all(context.temp_allocator)
 	fmt.printf("%s\n     %s\n\n", parser.program_name, parser.description)
 	fmt.printf("USAGE: %s", parser.program_name)
 	for e in parser.command_path {
 		fmt.printf(" %s", e.name)
 	}
 	args: [dynamic]^arg
+	cmds: [dynamic]^cmd
 	if parser.command_path == nil {
 		for i := 0; i < len(parser.cmd_or_arg); i += 1 {
-			if a, ok := &parser.cmd_or_arg[i].(arg); ok {
-				append(&args, a)
+			if v, ok := &parser.cmd_or_arg[i].(arg); ok {
+				append(&args, v)
+			} else {
+				v, _ := &parser.cmd_or_arg[i].(cmd)
+				append(&cmds, v)
 			}
 		}
 	} else {
 		c := parser.command_path[len(parser.command_path) - 1]
 		for i := 0; i < len(c.items); i += 1 {
-			if a, ok := &c.items[i].(arg); ok {
-				append(&args, a)
+			if v, ok := &c.items[i].(arg); ok {
+				append(&args, v)
+			} else {
+				v, _ := &c.items[i].(cmd)
+				append(&cmds, v)
 			}
 		}
 	}
@@ -118,6 +126,12 @@ print_help :: proc(parser: ^Parser) {
 		}
 	}
 	fmt.println()
+	if len(cmds) > 0 {
+		fmt.println("\nAvailable commands:\n")
+		for c in cmds {
+			fmt.printf("  %-30s %s\n", c.name, c.description)
+		}
+	}
 	if len(args) > 0 {
 		builder: strings.Builder
 		strings.builder_init(&builder)
@@ -150,11 +164,9 @@ print_help :: proc(parser: ^Parser) {
 			as = strings.clone(strings.to_string(builder))
 			strings.builder_reset(&builder)
 			if a.default != nil do def = strings.clone(fmt.sbprintf(&builder, " [DEFAULT: %v]", a.default))
-			fmt.printf("  %-30s%s%s\n", as, desc, def)
+			fmt.printf("  %-30s %s%s\n", as, desc, def)
 		}
 	}
-
-	free_all(context.temp_allocator)
 }
 
 
