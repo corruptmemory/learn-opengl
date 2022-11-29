@@ -70,8 +70,8 @@ parser_destroy :: proc(parser: ^Parser) {
 print_help :: proc(parser: ^Parser) {
 	context.allocator = context.temp_allocator
 	defer free_all(context.temp_allocator)
-	fmt.printf("%s\n     %s\n\n", parser.program_name, parser.description)
-	fmt.printf("USAGE: %s", parser.program_name)
+	fmt.printf("%s\n\n   %s\n\n", parser.program_name, parser.description)
+	fmt.printf("USAGE:\n\n   %s", parser.program_name)
 	for e in parser.command_path {
 		fmt.printf(" %s", e.name)
 	}

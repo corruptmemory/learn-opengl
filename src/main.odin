@@ -11,7 +11,6 @@ goober :: struct {
 
 main :: proc() {
 	context.logger = log.create_console_logger()
-	// x: int
 	y: struct {
 		a:  string `short:"a" long:"a-arg" description:"This is A argument"`,
 		b:  int `short:"b" long:"b-arg" description:"This is B argument" default:"123"`,
@@ -34,7 +33,7 @@ main :: proc() {
 	#partial switch cliargs.parse_args(
 		   &parser,
 		   &y,
-		   []string{"-a", "hello", "-c", "999", "goober", "-h"},
+		   []string{"-a", "hello", "-c", "999", "-h"},
 	   ) {
 	   	case .Failure:
 		   	for e in parser.errors {
