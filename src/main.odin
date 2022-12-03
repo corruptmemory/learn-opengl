@@ -16,11 +16,11 @@ import stb "vendor:stb/image"
 Vector2i32 :: distinct [2]i32
 
 CharStruct :: struct {
-  textureID: u32,            // ID handle of the glyph texture
-  size: Vector2i32,          // Size of glyph
-  bearing: Vector2i32,       // Offset from baseline to left/top of glyph
-  texture_coord: Vector2i32, // Coordinate in the texture map
-  advance: u32,              // Offset to advance to next glyph
+	textureID:     u32, // ID handle of the glyph texture
+	size:          Vector2i32, // Size of glyph
+	bearing:       Vector2i32, // Offset from baseline to left/top of glyph
+	texture_coord: Vector2i32, // Coordinate in the texture map
+	advance:       u32, // Offset to advance to next glyph
 }
 
 
@@ -69,101 +69,110 @@ byte_size_slice :: proc(t: $T/[]$E) -> int {
 }
 
 fill_chars :: proc(face: ft.Face, chars_across: i32) {
-  // gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1) // disable byte-alignment restriction
+	// gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1) // disable byte-alignment restriction
 
-  texture_rows := 128 / chars_across
-  if 128 % chars_across > 0 {
-    texture_rows += 1
-  }
+	texture_rows := 128 / chars_across
+	if 128 % chars_across > 0 {
+		texture_rows += 1
+	}
 
-  // TODO(jim): This can be improved.  Look at using the BBox struct in the Face
-  for c : u32 = 0; c < 128; c += 1 {
-    if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
-      log.errorf("Failed to load Glyph: %v", err)
-      os.exit(-1)
-    }
-    w := i32(face.glyph.metrics.width >> 6)
-    if face.glyph.metrics.width % 64 > 0 {
-      w += 1
-    }
-    h := i32(face.glyph.metrics.height >> 6)
-    if face.glyph.metrics.height % 64 > 0 {
-      h += 1
-    }
+	// TODO(jim): This can be improved.  Look at using the BBox struct in the Face
+	for c: u32 = 0; c < 128; c += 1 {
+		if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
+			log.errorf("Failed to load Glyph: %v", err)
+			os.exit(-1)
+		}
+		w := i32(face.glyph.metrics.width >> 6)
+		if face.glyph.metrics.width % 64 > 0 {
+			w += 1
+		}
+		h := i32(face.glyph.metrics.height >> 6)
+		if face.glyph.metrics.height % 64 > 0 {
+			h += 1
+		}
 
-    if w > max_width {
-      max_width = w
-    }
-    if h > max_height {
-      max_height = h
-    }
-  }
+		if w > max_width {
+			max_width = w
+		}
+		if h > max_height {
+			max_height = h
+		}
+	}
 
-  origin := face.ascender >> 6
-  half_glyph := max_width/2
-  texture_width = max_width * chars_across
-  texture_height = max_height * texture_rows
-  glyph_len := max_width * max_height
-  bits := make([]byte, texture_width*texture_height)
-  defer delete(bits)
+	// origin := face.ascender >> 6
+	// half_glyph := max_width / 2
+	texture_width = max_width * chars_across
+	texture_height = max_height * texture_rows
+	bits := make([]byte, texture_width * texture_height)
+	defer delete(bits)
 
-  texture: u32
-  gl.GenTextures(1, &texture)
-  x, y: i32
-  baseIdx: i32
-  for c : u32 = 0; c < 128; c += 1 {
-    // load character glyph
-    if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
-      log.errorf("Failed to load Glyph: %v", err)
-      os.exit(-1)
-    }
-    glyph_bits := mem.slice_ptr(face.glyph.bitmap.buffer, int(glyph_len))
-    row_end := face.glyph.bitmap.width
-    fixup := half_glyph - i32(face.glyph.bitmap.width/2)
+	texture: u32
+	// gl.GenTextures(1, &texture)
+	x, y: i32
+	baseIdx: i32
+	for c: u32 = 0; c < 128; c += 1 {
+		// load character glyph
+		if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
+			log.errorf("Failed to load Glyph: %v", err)
+			os.exit(-1)
+		}
+		if face.glyph.bitmap.width > 0 && face.glyph.bitmap.rows > 0 {
+			log.infof("glyph: %v", face.glyph)
+			abs_pitch := i32(abs(face.glyph.bitmap.pitch))
+			row_end := abs_pitch
+			glyph_len := row_end * auto_cast face.glyph.bitmap.rows
+			glyph_bits := mem.slice_ptr(face.glyph.bitmap.buffer, auto_cast glyph_len)
 
-    yfixup : i32 = i32(origin) - face.glyph.bitmap_top
-    for yi : i32 = 0; yi < i32(face.glyph.bitmap.rows); yi += 1 {
-      ydest := yi + yfixup
-      ds := baseIdx + fixup + i32(ydest * texture_width)
-      log.infof("fixup: %d -- ds: %d -- baseIdx: %d -- ydest: %d -- texture_width: %d", fixup, ds, baseIdx, ydest, texture_width)
-      if ds < 0 do ds = 0
-      ss := u32(yi) * face.glyph.bitmap.width
-      copy(bits[ds:], glyph_bits[ss:row_end])
-      row_end += face.glyph.bitmap.width
-    }
-    append(&chars, CharStruct{
-      textureID = texture,
-      size = Vector2i32{i32(max_width), i32(max_height)},
-      bearing = Vector2i32{0, 0},
-      texture_coord = Vector2i32{i32(x), i32(y)},
-      advance = u32(face.glyph.advance.x) >> 6,
-    })
-    x += max_width
-    if x >= texture_width {
-      x = 0
-      y += max_height
-    }
-    baseIdx = x + (y * texture_width)
-  }
-  stb.write_png("./glyphs.png", texture_width, texture_height, 1, mem.raw_data(bits), texture_width)
-  // log.debugf("texture: %d", texture)
-  // gl.BindTexture(gl.TEXTURE_RECTANGLE, texture);
-  // gl.TexImage2D(
-  //   gl.TEXTURE_RECTANGLE,
-  //   0,
-  //   gl.RED,
-  //   i32(texture_width),
-  //   i32(texture_height),
-  //   0,
-  //   gl.RED,
-  //   gl.UNSIGNED_BYTE,
-  //   mem.raw_data(bits),
-  // )
-  // gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-  // gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-  // gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-  // gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-  // gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
+			for yi: i32 = 0; yi < i32(face.glyph.bitmap.rows); yi += 1 {
+				ds := baseIdx + i32(yi * texture_width)
+				ss := yi * abs_pitch
+				copy(bits[ds:], glyph_bits[ss:row_end])
+				row_end += abs_pitch
+			}
+			append(
+				&chars,
+				CharStruct{
+					textureID = texture,
+					size = Vector2i32{i32(max_width), i32(max_height)},
+					bearing = Vector2i32{0, 0},
+					texture_coord = Vector2i32{i32(x), i32(y)},
+					advance = u32(face.glyph.advance.x) >> 6,
+				},
+			)
+		}
+		x += max_width
+		if x >= texture_width {
+			x = 0
+			y += max_height
+		}
+		baseIdx = x + (y * texture_width)
+	}
+	stb.write_png(
+		"./glyphs.png",
+		texture_width,
+		texture_height,
+		1,
+		mem.raw_data(bits),
+		texture_width,
+	)
+	// log.debugf("texture: %d", texture)
+	// gl.BindTexture(gl.TEXTURE_RECTANGLE, texture);
+	// gl.TexImage2D(
+	//   gl.TEXTURE_RECTANGLE,
+	//   0,
+	//   gl.RED,
+	//   i32(texture_width),
+	//   i32(texture_height),
+	//   0,
+	//   gl.RED,
+	//   gl.UNSIGNED_BYTE,
+	//   mem.raw_data(bits),
+	// )
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	// gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
 }
 
 main :: proc() {
@@ -243,7 +252,7 @@ main :: proc() {
 		os.exit(-1)
 	}
 	defer ft.Done_Face(face)
-	if err := ft.Set_Char_Size(face, 0, 16*64, 92, 92); err != 0 {
+	if err := ft.Set_Char_Size(face, 0, 36 * 64, 92, 92); err != 0 {
 		log.error("Failed to set face size")
 		os.exit(-1)
 	}
