@@ -26,7 +26,7 @@ CharStruct :: struct {
 
 chars: [dynamic]CharStruct
 freetype: ft.Library
-max_height, max_width, ascender, descender, baseline: i32
+max_height, max_width: i32
 texture_width, texture_height: i32
 
 error_handler :: proc "c" (error: c.int, description: cstring) {
@@ -63,104 +63,68 @@ void main()
     gl_FragColor = vec4(color, 1.0);
 }
 `
-
-text_vertex_shader_text: cstring = `#version 330 core
-layout (location = 0) in vec4 vertex; // <vec2 pos, vec2 tex>
-out vec2 TexCoords;
-
-uniform mat4 projection;
-
-void main()
-{
-    gl_Position = projection * vec4(vertex.xy, 0.0, 1.0);
-    TexCoords = vertex.zw;
-}
-`
-
-text_fragment_shader_text: cstring = `#version 330 core
-in vec2 TexCoords;
-out vec4 color;
-
-uniform sampler2D text;
-uniform vec3 textColor;
-
-void main()
-{
-    vec4 sampled = vec4(1.0, 1.0, 1.0, texture(text, TexCoords).r);
-    color = vec4(textColor, 1.0) * sampled;
-}
-`
-
 // NOTE: This is a woefully incomplete definition since E can be some other "vector-y" thing
 byte_size_slice :: proc(t: $T/[]$E) -> int {
 	return size_of(E) * len(t)
 }
 
-log_metric :: proc(name: string, pos: ft.Pos) {
-	log.infof("     %s: %d", name, pos >> 6)
-}
-
-log_glyph_metrics :: proc(gm: ^ft.Glyph_Metrics) {
-	log.info("*** glyph metrics")
-	log_metric("width", gm.width)
-	log_metric("height", gm.height)
-	log_metric("horiBearingX", gm.horiBearingX)
-	log_metric("horiBearingY", gm.horiBearingY)
-	log_metric("horiAdvance", gm.horiAdvance)
-	log_metric("vertBearingX", gm.vertBearingX)
-	log_metric("vertBearingY", gm.vertBearingY)
-	log_metric("vertAdvance", gm.vertAdvance)
-}
-
-log_size_metrics :: proc(gm: ^ft.Size_Metrics) {
-	log.info("*** size metrics")
-	log.infof("     x_ppem: %v", gm.x_ppem)
-	log.infof("     y_ppem: %v", gm.y_ppem)
-	log.infof("     x_scale: %v", gm.x_scale)
-	log.infof("     y_scale: %v", gm.y_scale)
-	log_metric("ascender", gm.ascender)
-	log_metric("descender", gm.descender)
-	log_metric("height", gm.height)
-	log_metric("max_advance", gm.max_advance)
-}
-
-
 fill_chars :: proc(face: ft.Face, chars_across: i32) {
-	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1) // disable byte-alignment restriction
+	// gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1) // disable byte-alignment restriction
 
 	texture_rows := 128 / chars_across
 	if 128 % chars_across > 0 {
 		texture_rows += 1
 	}
 
-	max_height = i32(face.size.metrics.height >> 6)
-	max_width = i32(face.size.metrics.max_advance >> 6)
-	ascender = i32(face.size.metrics.ascender >> 6)
-	descender = abs(i32(face.size.metrics.descender >> 6))
-	baseline = descender-1
+	// TODO(jim): This can be improved.  Look at using the BBox struct in the Face
+	for c: u32 = 0; c < 128; c += 1 {
+		if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
+			log.errorf("Failed to load Glyph: %v", err)
+			os.exit(-1)
+		}
+		w := i32(face.glyph.metrics.width >> 6)
+		if face.glyph.metrics.width % 64 > 0 {
+			w += 1
+		}
+		h := i32(face.glyph.metrics.height >> 6)
+		if face.glyph.metrics.height % 64 > 0 {
+			h += 1
+		}
 
+		if w > max_width {
+			max_width = w
+		}
+		if h > max_height {
+			max_height = h
+		}
+	}
+
+	// origin := face.ascender >> 6
+	// half_glyph := max_width / 2
 	texture_width = max_width * chars_across
 	texture_height = max_height * texture_rows
 	bits := make([]byte, texture_width * texture_height)
 	defer delete(bits)
 
 	texture: u32
-	gl.GenTextures(1, &texture)
+	// gl.GenTextures(1, &texture)
 	x, y: i32
 	baseIdx: i32
 	for c: u32 = 0; c < 128; c += 1 {
+		// load character glyph
 		if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
-			log.fatalf("Failed to load Glyph: %v", err)
+			log.errorf("Failed to load Glyph: %v", err)
+			os.exit(-1)
 		}
 		if face.glyph.bitmap.width > 0 && face.glyph.bitmap.rows > 0 {
+			log.infof("glyph: %v", face.glyph)
 			abs_pitch := i32(abs(face.glyph.bitmap.pitch))
 			row_end := abs_pitch
 			glyph_len := row_end * auto_cast face.glyph.bitmap.rows
 			glyph_bits := mem.slice_ptr(face.glyph.bitmap.buffer, auto_cast glyph_len)
-			start := ascender - face.glyph.bitmap_top
-			left := face.glyph.bitmap_left
+
 			for yi: i32 = 0; yi < i32(face.glyph.bitmap.rows); yi += 1 {
-				ds := baseIdx + left + i32((yi+start) * texture_width)
+				ds := baseIdx + i32(yi * texture_width)
 				ss := yi * abs_pitch
 				copy(bits[ds:], glyph_bits[ss:row_end])
 				row_end += abs_pitch
@@ -191,40 +155,24 @@ fill_chars :: proc(face: ft.Face, chars_across: i32) {
 		mem.raw_data(bits),
 		texture_width,
 	)
-	log.debugf("texture: %d", texture)
-	gl.BindTexture(gl.TEXTURE_RECTANGLE, texture);
-	gl.TexImage2D(
-	  gl.TEXTURE_RECTANGLE,
-	  0,
-	  gl.RED,
-	  i32(texture_width),
-	  i32(texture_height),
-	  0,
-	  gl.RED,
-	  gl.UNSIGNED_BYTE,
-	  mem.raw_data(bits),
-	)
-	gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-	gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
-	gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
-	gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
-}
-
-// Result[0][0] = static_cast<T>(2) / (right - left);
-// Result[1][1] = static_cast<T>(2) / (top - bottom);
-// Result[2][2] = - static_cast<T>(1);
-// Result[3][0] = - (right + left) / (right - left);
-// Result[3][1] = - (top + bottom) / (top - bottom);
-
-mat4Ortho3d :: proc "c" (left, right, bottom, top: f32) -> (m: glsl.mat4) {
-	m[0, 0] = +2 / (right - left)
-	m[1, 1] = +2 / (top - bottom)
-	m[2, 2] = 1
-	m[0, 3] = -(right + left)   / (right - left)
-	m[1, 3] = -(top   + bottom) / (top - bottom)
-	m[3, 3] = 1
-	return m
+	// log.debugf("texture: %d", texture)
+	// gl.BindTexture(gl.TEXTURE_RECTANGLE, texture);
+	// gl.TexImage2D(
+	//   gl.TEXTURE_RECTANGLE,
+	//   0,
+	//   gl.RED,
+	//   i32(texture_width),
+	//   i32(texture_height),
+	//   0,
+	//   gl.RED,
+	//   gl.UNSIGNED_BYTE,
+	//   mem.raw_data(bits),
+	// )
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MIN_FILTER, gl.NEAREST)
+	// gl.TexParameteri(gl.TEXTURE_RECTANGLE, gl.TEXTURE_MAG_FILTER, gl.NEAREST)
+	// gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
 }
 
 main :: proc() {
@@ -249,9 +197,6 @@ main :: proc() {
 	vertex_buffer, vertex_shader, fragment_shader, program: u32
 	mvp_location, vpos_location, vcol_location: i32
 
-	text_vertex_buffer, text_vertex_shader, text_fragment_shader, text_program: u32
-	text_mvp_location, text_vpos_location, text_vcol_location: i32
-
 	gl.GenBuffers(1, &vertex_buffer)
 	gl.BindBuffer(gl.ARRAY_BUFFER, vertex_buffer)
 	gl.BufferData(
@@ -260,8 +205,6 @@ main :: proc() {
 		mem.raw_data(vertices),
 		gl.STATIC_DRAW,
 	)
-
-	text_projection := mat4Ortho3d(0.0, 800.0, 0.0, 600.0)
 
 	vertex_shader = gl.CreateShader(gl.VERTEX_SHADER)
 	gl.ShaderSource(vertex_shader, 1, &vertex_shader_text, nil)
@@ -313,12 +256,8 @@ main :: proc() {
 		log.error("Failed to set face size")
 		os.exit(-1)
 	}
-	log.info("filling...")
 	fill_chars(face, 64)
-	log.info("Should exit now")
 
-	gl.Enable(gl.BLEND)
-	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
 	for !glfw.WindowShouldClose(window) {
 		if glfw.GetKey(window, glfw.KEY_ESCAPE) == glfw.PRESS do glfw.SetWindowShouldClose(window, true)
 
