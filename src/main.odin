@@ -29,6 +29,12 @@ freetype: ft.Library
 max_height, max_width, ascender, descender, baseline: i32
 texture_width, texture_height: i32
 
+text_vertex_buffer, text_vertex_shader, text_fragment_shader, text_program: u32
+text_color_location, text_text_location, text_vertex, text_projection_location: i32
+
+text_projection: glsl.mat4
+VAO, VBO: u32
+
 error_handler :: proc "c" (error: c.int, description: cstring) {
 	context = runtime.default_context()
 	fmt.printf("error from GLFW[%d]: %s\n", error, description)
@@ -191,8 +197,7 @@ fill_chars :: proc(face: ft.Face, chars_across: i32) {
 		mem.raw_data(bits),
 		texture_width,
 	)
-	log.debugf("texture: %d", texture)
-	gl.BindTexture(gl.TEXTURE_RECTANGLE, texture);
+	gl.BindTexture(gl.TEXTURE_RECTANGLE, texture)
 	gl.TexImage2D(
 	  gl.TEXTURE_RECTANGLE,
 	  0,
@@ -227,6 +232,51 @@ mat4Ortho3d :: proc "c" (left, right, bottom, top: f32) -> (m: glsl.mat4) {
 	return m
 }
 
+render_text :: proc(text: string,  x: f32,  y: f32,  scale: f32, color: glsl.vec3) {
+    // activate corresponding render state
+    gl.UseProgram(text_program)
+    gl.Uniform3f(text_color_location, color.x, color.y, color.z)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindVertexArray(VAO)
+
+    local_x := x
+
+    for c in text {
+        ch := chars[c]
+
+        xpos := local_x + f32(ch.bearing.x) * scale
+        ypos := y - f32(ch.size.y - ch.bearing.y) * scale
+
+        w := f32(ch.size.x) * scale
+        h := f32(ch.size.y) * scale
+        // update VBO for each character
+        vertices: [6][4]f32 = {
+            { xpos,     ypos + h,   f32(ch.texture_coord.x),   f32(ch.texture_coord.y)+h }, // { xpos,     ypos + h,   0.0, 0.0 }
+            { xpos,     ypos,       f32(ch.texture_coord.x),   f32(ch.texture_coord.y) }, // { xpos,     ypos,       0.0, 1.0 }
+            { xpos + w, ypos,       f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y) }, // { xpos + w, ypos,       1.0, 1.0 }
+
+            { xpos,     ypos + h,   f32(ch.texture_coord.x),   f32(ch.texture_coord.y)+h }, // { xpos,     ypos + h,   0.0, 0.0 }
+            { xpos + w, ypos,       f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y) }, // { xpos + w, ypos,       1.0, 1.0 }
+            { xpos + w, ypos + h,   f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y)+h }, // { xpos + w, ypos + h,   1.0, 0.0 }
+        }
+
+        log.infof("vertices: %v", vertices)
+
+        // render glyph texture over quad
+        gl.BindTexture(gl.TEXTURE_RECTANGLE, ch.textureID)
+        // update content of VBO memory
+        gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
+        gl.BufferSubData(gl.ARRAY_BUFFER, 0, size_of(vertices), mem.raw_data(vertices[:]))
+        gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+        // render quad
+        gl.DrawArrays(gl.TRIANGLES, 0, 6)
+        // now advance cursors for next glyph (note that advance is number of 1/64 pixels)
+        local_x += f32(ch.advance) * scale // bitshift by 6 to get value in pixels (2^6 = 64)
+    }
+    gl.BindVertexArray(0)
+    gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
+}
+
 main :: proc() {
 	context.logger = log.create_console_logger()
 
@@ -249,9 +299,6 @@ main :: proc() {
 	vertex_buffer, vertex_shader, fragment_shader, program: u32
 	mvp_location, vpos_location, vcol_location: i32
 
-	text_vertex_buffer, text_vertex_shader, text_fragment_shader, text_program: u32
-	text_mvp_location, text_vpos_location, text_vcol_location: i32
-
 	gl.GenBuffers(1, &vertex_buffer)
 	gl.BindBuffer(gl.ARRAY_BUFFER, vertex_buffer)
 	gl.BufferData(
@@ -261,7 +308,7 @@ main :: proc() {
 		gl.STATIC_DRAW,
 	)
 
-	text_projection := mat4Ortho3d(0.0, 800.0, 0.0, 600.0)
+	text_projection = mat4Ortho3d(0.0, 640.0, 0.0, 480.0)
 
 	vertex_shader = gl.CreateShader(gl.VERTEX_SHADER)
 	gl.ShaderSource(vertex_shader, 1, &vertex_shader_text, nil)
@@ -313,9 +360,38 @@ main :: proc() {
 		log.error("Failed to set face size")
 		os.exit(-1)
 	}
-	log.info("filling...")
+	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
 	fill_chars(face, 64)
-	log.info("Should exit now")
+
+	text_vertex_shader = gl.CreateShader(gl.VERTEX_SHADER)
+	gl.ShaderSource(text_vertex_shader, 1, &text_vertex_shader_text, nil)
+	gl.CompileShader(text_vertex_shader)
+
+	text_fragment_shader = gl.CreateShader(gl.FRAGMENT_SHADER)
+	gl.ShaderSource(text_fragment_shader, 1, &text_fragment_shader_text, nil)
+	gl.CompileShader(text_fragment_shader)
+
+	text_program = gl.CreateProgram()
+	gl.AttachShader(text_program, text_vertex_shader)
+	gl.AttachShader(text_program, text_fragment_shader)
+	gl.LinkProgram(text_program)
+
+	text_projection_location = gl.GetUniformLocation(text_program, "projection")
+	gl.UseProgram(text_program)
+	gl.UniformMatrix4fv(text_projection_location, 1, gl.FALSE, ([^]f32)(&text_projection))
+	text_color_location = gl.GetUniformLocation(text_program, "textColor")
+	text_text_location = gl.GetAttribLocation(text_program, "text")
+	text_vertex = gl.GetAttribLocation(text_program, "vertex")
+
+	gl.GenVertexArrays(1, &VAO)
+	gl.GenBuffers(1, &VBO)
+	gl.BindVertexArray(VAO)
+	gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
+	gl.BufferData(gl.ARRAY_BUFFER, size_of(f32) * 6 * 4, nil, gl.DYNAMIC_DRAW)
+	gl.EnableVertexAttribArray(0)
+	gl.VertexAttribPointer(0, 4, gl.FLOAT, gl.FALSE, 4 * size_of(f32), 0)
+	gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+	gl.BindVertexArray(0)
 
 	gl.Enable(gl.BLEND)
 	gl.BlendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA)
@@ -335,7 +411,7 @@ main :: proc() {
 		gl.UseProgram(program)
 		gl.UniformMatrix4fv(mvp_location, 1, gl.FALSE, ([^]f32)(&mvp))
 		gl.DrawArrays(gl.TRIANGLES, 0, 3)
-
+		render_text("This is sample text", 25.0, 25.0, 1.0, glsl.vec3{0.5, 0.8, 0.2})
 		glfw.SwapBuffers(window)
 		glfw.PollEvents()
 	}
