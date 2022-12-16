@@ -6,7 +6,7 @@ import "core:runtime"
 import "core:os"
 import "core:mem"
 import "core:c"
-// import "core:math/linalg"
+import "core:math/linalg"
 import "core:math/linalg/glsl"
 import "vendor:glfw"
 import gl "vendor:OpenGL"
@@ -451,19 +451,19 @@ main :: proc() {
 		if glfw.GetKey(window, glfw.KEY_ESCAPE) == glfw.PRESS do glfw.SetWindowShouldClose(window, true)
 
 		width, height := glfw.GetFramebufferSize(window)
-		// ratio := (f32)(width) / (f32)(height)
+		ratio := (f32)(width) / (f32)(height)
 
 		text_projection = mat4Ortho3d(0.0, f32(width), 0.0, f32(height))
 		gl.Viewport(0, 0, width, height)
 		gl.Clear(gl.COLOR_BUFFER_BIT)
 
-		// m := linalg.matrix4_from_euler_angle_z_f32(auto_cast glfw.GetTime())
-		// p := glsl.mat4Ortho3d(-ratio, ratio, -1, 1, 1, -1)
-		// mvp := p * m
+		m := linalg.matrix4_from_euler_angle_z_f32(auto_cast glfw.GetTime())
+		p := glsl.mat4Ortho3d(-ratio, ratio, -1, 1, 1, -1)
+		mvp := p * m
 
-		// gl.UseProgram(program)
-		// gl.UniformMatrix4fv(mvp_location, 1, gl.FALSE, ([^]f32)(&mvp))
-		// gl.DrawArrays(gl.TRIANGLES, 0, 3)
+		gl.UseProgram(program)
+		gl.UniformMatrix4fv(mvp_location, 1, gl.FALSE, ([^]f32)(&mvp))
+		gl.DrawArrays(gl.TRIANGLES, 0, 3)
 		render_text("This is sample text", 10.0, 100.0, 1.0, glsl.vec3{1, 1, 1})
 		// render_texture(f32(width), f32(height), glsl.vec3{1, 1, 1})
 		glfw.SwapBuffers(window)
