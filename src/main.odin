@@ -6,7 +6,7 @@ import "core:runtime"
 import "core:os"
 import "core:mem"
 import "core:c"
-import "core:math/linalg"
+// import "core:math/linalg"
 import "core:math/linalg/glsl"
 import "vendor:glfw"
 import gl "vendor:OpenGL"
@@ -16,6 +16,7 @@ import stb "vendor:stb/image"
 Vector2i32 :: distinct [2]i32
 
 CharStruct :: struct {
+	char:          u8, // The char
 	textureID:     u32, // ID handle of the glyph texture
 	size:          Vector2i32, // Size of glyph
 	bearing:       Vector2i32, // Offset from baseline to left/top of glyph
@@ -29,6 +30,7 @@ freetype: ft.Library
 max_height, max_width, ascender, descender, baseline: i32
 texture_width, texture_height: i32
 
+font_texture: u32
 text_vertex_buffer, text_vertex_shader, text_fragment_shader, text_program: u32
 text_color_location, text_text_location, text_vertex, text_projection_location: i32
 
@@ -87,7 +89,7 @@ text_fragment_shader_text: cstring = `#version 330 core
 in vec2 TexCoords;
 out vec4 color;
 
-uniform sampler2D text;
+uniform sampler2DRect text;
 uniform vec3 textColor;
 
 void main()
@@ -150,8 +152,7 @@ fill_chars :: proc(face: ft.Face, chars_across: i32) {
 	bits := make([]byte, texture_width * texture_height)
 	defer delete(bits)
 
-	texture: u32
-	gl.GenTextures(1, &texture)
+	gl.GenTextures(1, &font_texture)
 	x, y: i32
 	baseIdx: i32
 	for c: u32 = 0; c < 128; c += 1 {
@@ -174,7 +175,24 @@ fill_chars :: proc(face: ft.Face, chars_across: i32) {
 			append(
 				&chars,
 				CharStruct{
-					textureID = texture,
+					char = u8(c),
+					textureID = font_texture,
+					size = Vector2i32{i32(max_width), i32(max_height)},
+					bearing = Vector2i32{0, 0},
+					texture_coord = Vector2i32{i32(x), i32(y)},
+					advance = u32(face.glyph.advance.x) >> 6,
+				},
+			)
+		} else {
+			for yi: i32 = 0; yi < i32(face.glyph.bitmap.rows); yi += 1 {
+				ds := baseIdx + i32(yi * texture_width)
+				mem.zero_slice(bits[ds:ds+max_width])
+			}
+			append(
+				&chars,
+				CharStruct{
+					char = u8(c),
+					textureID = font_texture,
 					size = Vector2i32{i32(max_width), i32(max_height)},
 					bearing = Vector2i32{0, 0},
 					texture_coord = Vector2i32{i32(x), i32(y)},
@@ -197,7 +215,7 @@ fill_chars :: proc(face: ft.Face, chars_across: i32) {
 		mem.raw_data(bits),
 		texture_width,
 	)
-	gl.BindTexture(gl.TEXTURE_RECTANGLE, texture)
+	gl.BindTexture(gl.TEXTURE_RECTANGLE, font_texture)
 	gl.TexImage2D(
 	  gl.TEXTURE_RECTANGLE,
 	  0,
@@ -232,18 +250,20 @@ mat4Ortho3d :: proc "c" (left, right, bottom, top: f32) -> (m: glsl.mat4) {
 	return m
 }
 
-render_text :: proc(text: string,  x: f32,  y: f32,  scale: f32, color: glsl.vec3) {
+render_text :: proc(text: string, x, y: f32, scale: f32, color: glsl.vec3) {
     // activate corresponding render state
     gl.UseProgram(text_program)
+    gl.UniformMatrix4fv(text_projection_location, 1, gl.FALSE, ([^]f32)(&text_projection))
     gl.Uniform3f(text_color_location, color.x, color.y, color.z)
     gl.ActiveTexture(gl.TEXTURE0)
     gl.BindVertexArray(VAO)
+	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
+    gl.BindTexture(gl.TEXTURE_RECTANGLE, font_texture)
 
     local_x := x
 
     for c in text {
         ch := chars[c]
-
         xpos := local_x + f32(ch.bearing.x) * scale
         ypos := y - f32(ch.size.y - ch.bearing.y) * scale
 
@@ -251,20 +271,15 @@ render_text :: proc(text: string,  x: f32,  y: f32,  scale: f32, color: glsl.vec
         h := f32(ch.size.y) * scale
         // update VBO for each character
         vertices: [6][4]f32 = {
-            { xpos,     ypos + h,   f32(ch.texture_coord.x),   f32(ch.texture_coord.y)+h }, // { xpos,     ypos + h,   0.0, 0.0 }
-            { xpos,     ypos,       f32(ch.texture_coord.x),   f32(ch.texture_coord.y) }, // { xpos,     ypos,       0.0, 1.0 }
-            { xpos + w, ypos,       f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y) }, // { xpos + w, ypos,       1.0, 1.0 }
+            { xpos,   ypos+h, f32(ch.texture_coord.x),   f32(ch.texture_coord.y)   }, // { xpos,     ypos + h,   0.0, 0.0 }
+            { xpos,   ypos,   f32(ch.texture_coord.x),   f32(ch.texture_coord.y)+h }, // { xpos,     ypos,       0.0, 1.0 }
+            { xpos+w, ypos,   f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y)+h }, // { xpos + w, ypos,       1.0, 1.0 }
 
-            { xpos,     ypos + h,   f32(ch.texture_coord.x),   f32(ch.texture_coord.y)+h }, // { xpos,     ypos + h,   0.0, 0.0 }
-            { xpos + w, ypos,       f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y) }, // { xpos + w, ypos,       1.0, 1.0 }
-            { xpos + w, ypos + h,   f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y)+h }, // { xpos + w, ypos + h,   1.0, 0.0 }
+            { xpos,   ypos+h, f32(ch.texture_coord.x),   f32(ch.texture_coord.y)   }, // { xpos,     ypos + h,   0.0, 0.0 }
+            { xpos+w, ypos,   f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y)+h }, // { xpos + w, ypos,       1.0, 1.0 }
+            { xpos+w, ypos+h, f32(ch.texture_coord.x)+w, f32(ch.texture_coord.y)   }, // { xpos + w, ypos + h,   1.0, 0.0 }
         }
 
-        log.infof("vertices: %v", vertices)
-
-        // render glyph texture over quad
-        gl.BindTexture(gl.TEXTURE_RECTANGLE, ch.textureID)
-        // update content of VBO memory
         gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
         gl.BufferSubData(gl.ARRAY_BUFFER, 0, size_of(vertices), mem.raw_data(vertices[:]))
         gl.BindBuffer(gl.ARRAY_BUFFER, 0)
@@ -273,6 +288,46 @@ render_text :: proc(text: string,  x: f32,  y: f32,  scale: f32, color: glsl.vec
         // now advance cursors for next glyph (note that advance is number of 1/64 pixels)
         local_x += f32(ch.advance) * scale // bitshift by 6 to get value in pixels (2^6 = 64)
     }
+    gl.BindVertexArray(0)
+    gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
+}
+
+render_texture :: proc(x: f32,  y: f32, color: glsl.vec3) {
+    // activate corresponding render state
+    gl.UseProgram(text_program)
+    gl.UniformMatrix4fv(text_projection_location, 1, gl.FALSE, ([^]f32)(&text_projection))
+    gl.Uniform3f(text_color_location, color.x, color.y, color.z)
+    gl.ActiveTexture(gl.TEXTURE0)
+    gl.BindVertexArray(VAO)
+	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
+
+    vertices: [6][4]f32 = {
+        // { 0, y,   0,                  f32(texture_height) },
+        // { 0, 0,   0,                  0              },
+        // { x, 0,   f32(texture_width), 0              },
+
+        // { 0, y,   0,                  f32(texture_height) },
+        // { x, 0,   f32(texture_width), 0              },
+        // { x, y,   f32(texture_width), f32(texture_height) },
+
+
+        { 0,                  f32(texture_height), 0,                  0                   },
+        { 0,                  0,                   0,                  f32(texture_height) },
+        { f32(texture_width), 0,                   f32(texture_width), f32(texture_height) },
+
+        { 0,                  f32(texture_height), 0,                  0                   },
+        { f32(texture_width), 0,                   f32(texture_width), f32(texture_height) },
+        { f32(texture_width), f32(texture_height), f32(texture_width), 0                   },
+    }
+
+    gl.BindTexture(gl.TEXTURE_RECTANGLE, font_texture)
+    // update content of VBO memory
+    gl.BindBuffer(gl.ARRAY_BUFFER, VBO)
+    gl.BufferSubData(gl.ARRAY_BUFFER, 0, size_of(vertices), mem.raw_data(vertices[:]))
+    gl.BindBuffer(gl.ARRAY_BUFFER, 0)
+    // render quad
+    gl.DrawArrays(gl.TRIANGLES, 0, 6)
+    // now advance cursors for next glyph (note that advance is number of 1/64 pixels)
     gl.BindVertexArray(0)
     gl.BindTexture(gl.TEXTURE_RECTANGLE, 0)
 }
@@ -360,7 +415,6 @@ main :: proc() {
 		log.error("Failed to set face size")
 		os.exit(-1)
 	}
-	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1)
 	fill_chars(face, 64)
 
 	text_vertex_shader = gl.CreateShader(gl.VERTEX_SHADER)
@@ -377,8 +431,6 @@ main :: proc() {
 	gl.LinkProgram(text_program)
 
 	text_projection_location = gl.GetUniformLocation(text_program, "projection")
-	gl.UseProgram(text_program)
-	gl.UniformMatrix4fv(text_projection_location, 1, gl.FALSE, ([^]f32)(&text_projection))
 	text_color_location = gl.GetUniformLocation(text_program, "textColor")
 	text_text_location = gl.GetAttribLocation(text_program, "text")
 	text_vertex = gl.GetAttribLocation(text_program, "vertex")
@@ -399,19 +451,21 @@ main :: proc() {
 		if glfw.GetKey(window, glfw.KEY_ESCAPE) == glfw.PRESS do glfw.SetWindowShouldClose(window, true)
 
 		width, height := glfw.GetFramebufferSize(window)
-		ratio := (f32)(width) / (f32)(height)
+		// ratio := (f32)(width) / (f32)(height)
 
+		text_projection = mat4Ortho3d(0.0, f32(width), 0.0, f32(height))
 		gl.Viewport(0, 0, width, height)
 		gl.Clear(gl.COLOR_BUFFER_BIT)
 
-		m := linalg.matrix4_from_euler_angle_z_f32(auto_cast glfw.GetTime())
-		p := glsl.mat4Ortho3d(-ratio, ratio, -1, 1, 1, -1)
-		mvp := p * m
+		// m := linalg.matrix4_from_euler_angle_z_f32(auto_cast glfw.GetTime())
+		// p := glsl.mat4Ortho3d(-ratio, ratio, -1, 1, 1, -1)
+		// mvp := p * m
 
-		gl.UseProgram(program)
-		gl.UniformMatrix4fv(mvp_location, 1, gl.FALSE, ([^]f32)(&mvp))
-		gl.DrawArrays(gl.TRIANGLES, 0, 3)
-		render_text("This is sample text", 25.0, 25.0, 1.0, glsl.vec3{0.5, 0.8, 0.2})
+		// gl.UseProgram(program)
+		// gl.UniformMatrix4fv(mvp_location, 1, gl.FALSE, ([^]f32)(&mvp))
+		// gl.DrawArrays(gl.TRIANGLES, 0, 3)
+		render_text("This is sample text", 10.0, 100.0, 1.0, glsl.vec3{1, 1, 1})
+		// render_texture(f32(width), f32(height), glsl.vec3{1, 1, 1})
 		glfw.SwapBuffers(window)
 		glfw.PollEvents()
 	}
