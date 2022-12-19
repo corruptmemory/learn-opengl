@@ -15,6 +15,10 @@ import stb "vendor:stb/image"
 
 Vector2i32 :: distinct [2]i32
 
+Font :: struct {
+
+}
+
 CharStruct :: struct {
 	char:          u8, // The char
 	textureID:     u32, // ID handle of the glyph texture
@@ -23,7 +27,6 @@ CharStruct :: struct {
 	texture_coord: Vector2i32, // Coordinate in the texture map
 	advance:       u32, // Offset to advance to next glyph
 }
-
 
 chars: [dynamic]CharStruct
 freetype: ft.Library
