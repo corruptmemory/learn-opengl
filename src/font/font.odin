@@ -13,33 +13,27 @@ import gl "vendor:OpenGL"
 import ft "../freetype"
 import stb "vendor:stb/image"
 
-Vector2u16 :: distinct [2]u16
-
-Free_Type :: struct {
-	byte_size:         u32,
-	max_rendered_font: int,
-	library:           ft.Library,
-	fonts:             []Font,
-}
+Vec2u16 :: distinct [2]u16
 
 Char_Struct :: struct {
 	char_value:    rune,
 	displayable:   bool,
-	size:          Vector2u16, // Size of glyph
-	bearing:       Vector2u16, // Offset from baseline to left/top of glyph
-	texture_coord: Vector2u16, // Coordinate in the texture map
+	size:          Vec2u16, // Size of glyph
+	bearing:       Vec2u16, // Offset from baseline to left/top of glyph
+	texture_coord: Vec2u16, // Coordinate in the texture map
 }
 
 Font :: struct {
-	byte_size:     u32,
-	face:          ft.Face,
-	rendered_font: []^Rendered_Font,
+	byte_size:         u32,
+	max_rendered_font: int,
+	face:              ft.Face,
+	rendered_font:     []^Rendered_Font,
 }
 
 Rendered_Font :: struct {
 	byte_size:         u32,
 	font_size:         f32,
-	texture_dims:      Vector2u16,
+	texture_dims:      Vec2u16,
 	opengl_texture_id: u32,
 	char_hashmap:      []Char_Struct,
 	bits:              []u8,
@@ -53,7 +47,11 @@ compute_free_type_size_in_bytes :: proc(max_loaded_fonts: int, max_rendered_font
 }
 
 
-in_place_free_type_init :: proc(memory: rawptr, max_loaded_fonts: int, max_rendered_font: int) -> ^Free_Type {
+in_place_free_type_init :: proc(
+	memory: rawptr,
+	max_loaded_fonts: int,
+	max_rendered_font: int,
+) -> ^Free_Type {
 	memsize := compute_free_type_size_in_bytes(max_loaded_fonts, max_rendered_font)
 	mem.zero(memory, memsize)
 	result := (^Free_Type)(memory)
