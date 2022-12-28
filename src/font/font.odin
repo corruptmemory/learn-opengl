@@ -25,6 +25,7 @@ Char_Struct :: struct {
 
 Font :: struct {
 	byte_size:         u32,
+	allocator:         mem.Allocator,
 	max_rendered_font: int,
 	face:              ft.Face,
 	rendered_font:     []^Rendered_Font,
@@ -40,56 +41,27 @@ Rendered_Font :: struct {
 }
 
 
-compute_free_type_size_in_bytes :: proc(max_loaded_fonts: int, max_rendered_font: int) -> int {
-	assert(max_loaded_fonts > 0, "error: max_loaded_fonts must be greater than zero (> 0)")
-	assert(max_rendered_font > 0, "error: max_rendered_font must be greater than zero (> 0)")
-	return size_of(Free_Type) + compute_font_size_in_bytes(max_rendered_font) * max_loaded_fonts
-}
-
-
-in_place_free_type_init :: proc(
-	memory: rawptr,
-	max_loaded_fonts: int,
-	max_rendered_font: int,
-) -> ^Free_Type {
-	memsize := compute_free_type_size_in_bytes(max_loaded_fonts, max_rendered_font)
-	mem.zero(memory, memsize)
-	result := (^Free_Type)(memory)
-	result.byte_size = u32(memsize)
-	result.max_rendered_font = max_rendered_font
-	data_start := rawptr(uintptr(memory) + size_of(Free_Type))
-	result.fonts = mem.slice_ptr((^Font)(data_start), max_loaded_fonts)
-	return result
-}
-
-
-make_free_type :: proc(max_loaded_fonts: int, max_rendered_font: int) -> ^Free_Type {
-	memsize := compute_free_type_size_in_bytes(max_loaded_fonts, max_rendered_font)
-	memory := mem.alloc(memsize, align_of(^Free_Type))
-	return in_place_free_type_init(memory, max_rendered_font, max_rendered_font)
-}
-
-
 compute_font_size_in_bytes :: proc(max_rendered_font: int) -> int {
 	assert(max_rendered_font > 0, "error: max_rendered_font must be greater than zero (> 0)")
 	return size_of(Font) + size_of(^Rendered_Font) * max_rendered_font
 }
 
 
-in_place_font_init :: proc(memory: rawptr, max_rendered_font: int) -> ^Font {
+in_place_font_init :: proc(memory: rawptr, max_rendered_font: int, allocator: runtime.Allocator) -> ^Font {
 	memsize := compute_font_size_in_bytes(max_rendered_font)
 	mem.zero(memory, memsize)
 	result := (^Font)(memory)
 	result.byte_size = u32(memsize)
+	result.allocator = allocator
 	data_start := rawptr(uintptr(memory) + size_of(Font))
 	result.rendered_font = mem.slice_ptr((^^Rendered_Font)(data_start), max_rendered_font)
 	return result
 }
 
-make_font :: proc(max_rendered_font: int) -> ^Font {
+make_font :: proc(max_rendered_font: int, allocator := context.allocator) -> ^Font {
 	memsize := compute_font_size_in_bytes(max_rendered_font)
-	memory := mem.alloc(memsize, align_of(^Font))
-	return in_place_font_init(memory, max_rendered_font)
+	memory := mem.alloc(memsize, align_of(^Font), allocator)
+	return in_place_font_init(memory, max_rendered_font, allocator)
 }
 
 load_font :: proc(font: ^Font, freetype: ft.Library, path: cstring) -> ft.Error {
@@ -99,4 +71,21 @@ load_font :: proc(font: ^Font, freetype: ft.Library, path: cstring) -> ft.Error 
 		0, // TBD
 		&font.face,
 	)
+}
+
+delete_font :: proc(font: ^Font) {
+	assert(font != nil)
+	assert(font.byte_size != 0)
+	for rf in font.rendered_font {
+		delete_rendered_font(rf, font.allocator)
+	}
+	ft.Done_Face(font.face)
+	allocator := font.allocator
+	mem.zero(font, auto_cast font.byte_size)
+	mem.free(font, allocator)
+}
+
+
+delete_rendered_font :: proc(rendered_font: ^Rendered_Font, allocator: runtime.Allocator) {
+
 }
