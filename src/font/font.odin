@@ -36,7 +36,7 @@ Rendered_Font :: struct {
 	font_size:         f32,
 	texture_dims:      Vec2u16,
 	opengl_texture_id: u32,
-	char_hashmap:      []Char_Struct,
+	char_map:          []Char_Struct,
 	bits:              []u8,
 }
 
@@ -58,11 +58,13 @@ in_place_font_init :: proc(memory: rawptr, max_rendered_font: int, allocator: ru
 	return result
 }
 
+
 make_font :: proc(max_rendered_font: int, allocator := context.allocator) -> ^Font {
 	memsize := compute_font_size_in_bytes(max_rendered_font)
 	memory := mem.alloc(memsize, align_of(^Font), allocator)
 	return in_place_font_init(memory, max_rendered_font, allocator)
 }
+
 
 load_font :: proc(font: ^Font, freetype: ft.Library, path: cstring) -> ft.Error {
 	return ft.New_Face(
@@ -72,6 +74,7 @@ load_font :: proc(font: ^Font, freetype: ft.Library, path: cstring) -> ft.Error 
 		&font.face,
 	)
 }
+
 
 delete_font :: proc(font: ^Font) {
 	assert(font != nil)
@@ -87,5 +90,8 @@ delete_font :: proc(font: ^Font) {
 
 
 delete_rendered_font :: proc(rendered_font: ^Rendered_Font, allocator: runtime.Allocator) {
-
+	assert(rendered_font != nil)
+	assert(rendered_font.byte_size != 0)
+	mem.zero(rendered_font, auto_cast rendered_font.byte_size)
+	mem.free(rendered_font)
 }
