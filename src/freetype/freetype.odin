@@ -12,8 +12,8 @@ when ODIN_OS == .Windows {
   }
 }
 
-Long  :: c.long;
-ULong :: c.ulong;
+Long  :: c.long
+ULong :: c.ulong
 
 @(link_prefix="FT_", default_calling_convention="c")
 foreign freetype {
@@ -27,8 +27,8 @@ foreign freetype {
   Set_Char_Size   :: proc(face: Face, char_width, char_height: F26Dot6, horz_resolution, vert_resolution: u32) -> Error ---
   Set_Pixel_Sizes :: proc(face: Face, pixel_width, pixel_height: u32) -> Error ---
 
-  Get_First_Char  :: proc(face: Face, index: ^u32) -> c.ulong ---;
-  Get_Next_Char   :: proc(face: Face, character: c.ulong, index: ^u32) -> c.ulong ---;
+  Get_First_Char  :: proc(face: Face, index: ^u32) -> c.ulong ---
+  Get_Next_Char   :: proc(face: Face, character: c.ulong, index: ^u32) -> c.ulong ---
   Get_Char_Index  :: proc(face: Face, charcode: ULong) -> u32 ---
 
   Get_Kerning     :: proc(face: Face, left_glyph, right_glyph: u32, kern_mode: u32, akerning: ^Vector) -> Error ---
@@ -46,152 +46,152 @@ foreign freetype {
 }
 
 HAS_KERNING :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.KERNING in face.face_flags;
+  return FaceFlag.KERNING in face.face_flags
 }
 
 IS_SCALABLE :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.SCALABLE in face.face_flags;
+  return FaceFlag.SCALABLE in face.face_flags
 }
 
 HAS_FIXED_SIZES :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.FIXED_SIZES in face.face_flags;
+  return FaceFlag.FIXED_SIZES in face.face_flags
 }
 
 IS_FIXED_WIDTH :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.FIXED_WIDTH in face.face_flags;
+  return FaceFlag.FIXED_WIDTH in face.face_flags
 }
 
 IS_SFNT :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.SFNT in face.face_flags;
+  return FaceFlag.SFNT in face.face_flags
 }
 
 IS_HORIZONTAL :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.HORIZONTAL in face.face_flags;
+  return FaceFlag.HORIZONTAL in face.face_flags
 }
 
 IS_VERTICAL :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.VERTICAL in face.face_flags;
+  return FaceFlag.VERTICAL in face.face_flags
 }
 
 HAS_FAST_GLYPHS :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.FAST_GLYPHS in face.face_flags;
+  return FaceFlag.FAST_GLYPHS in face.face_flags
 }
 
 HAS_MULTIPLE_MASTERS :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.MULTIPLE_MASTERS in face.face_flags;
+  return FaceFlag.MULTIPLE_MASTERS in face.face_flags
 }
 
 HAS_GLYPH_NAMES :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.GLYPH_NAMES in face.face_flags;
+  return FaceFlag.GLYPH_NAMES in face.face_flags
 }
 
 HAS_EXTERNAL_STREAM :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.EXTERNAL_STREAM in face.face_flags;
+  return FaceFlag.EXTERNAL_STREAM in face.face_flags
 }
 
 HAS_HINTER :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.HINTER in face.face_flags;
+  return FaceFlag.HINTER in face.face_flags
 }
 
 IS_CID_KEYED :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.CID_KEYED in face.face_flags;
+  return FaceFlag.CID_KEYED in face.face_flags
 }
 
 IS_TRICKY :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.TRICKY in face.face_flags;
+  return FaceFlag.TRICKY in face.face_flags
 }
 
 HAS_COLOR :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.COLOR in face.face_flags;
+  return FaceFlag.COLOR in face.face_flags
 }
 
 IS_VARIATION :: #force_inline proc(face: Face) -> bool {
-  return FaceFlag.VARIATION in face.face_flags;
+  return FaceFlag.VARIATION in face.face_flags
 }
 
 
-LOAD_TARGET_NORMAL ::   (i32(Render_Mode.NORMAL) & 0x0F) << 16;
-LOAD_TARGET_LIGHT  ::   (i32(Render_Mode.LIGHT)  & 0x0F) << 16;
-LOAD_TARGET_MONO   ::   (i32(Render_Mode.MONO)   & 0x0F) << 16;
-LOAD_TARGET_LCD    ::   (i32(Render_Mode.LCD)    & 0x0F) << 16;
-LOAD_TARGET_LCD_V  ::   (i32(Render_Mode.LCD_V)  & 0x0F) << 16;
+LOAD_TARGET_NORMAL ::   (i32(Render_Mode.NORMAL) & 0x0F) << 16
+LOAD_TARGET_LIGHT  ::   (i32(Render_Mode.LIGHT)  & 0x0F) << 16
+LOAD_TARGET_MONO   ::   (i32(Render_Mode.MONO)   & 0x0F) << 16
+LOAD_TARGET_LCD    ::   (i32(Render_Mode.LCD)    & 0x0F) << 16
+LOAD_TARGET_LCD_V  ::   (i32(Render_Mode.LCD_V)  & 0x0F) << 16
 
-LOAD_DEFAULT                     :: 0;
-LOAD_NO_SCALE                    :: 1 << 0;
-LOAD_NO_HINTING                  :: 1 << 1;
-LOAD_RENDER                      :: 1 << 2;
-LOAD_NO_BITMAP                   :: 1 << 3;
-LOAD_VERTICAL_LAYOUT             :: 1 << 4;
-LOAD_FORCE_AUTOHINT              :: 1 << 5;
-LOAD_CROP_BITMAP                 :: 1 << 6;
-LOAD_PEDANTIC                    :: 1 << 7;
-LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH :: 1 << 9;
-LOAD_NO_RECURSE                  :: 1 << 10;
-LOAD_IGNORE_TRANSFORM            :: 1 << 11;
-LOAD_MONOCHROME                  :: 1 << 12;
-LOAD_LINEAR_DESIGN               :: 1 << 13;
-LOAD_NO_AUTOHINT                 :: 1 << 15;
+LOAD_DEFAULT                     :: 0
+LOAD_NO_SCALE                    :: 1 << 0
+LOAD_NO_HINTING                  :: 1 << 1
+LOAD_RENDER                      :: 1 << 2
+LOAD_NO_BITMAP                   :: 1 << 3
+LOAD_VERTICAL_LAYOUT             :: 1 << 4
+LOAD_FORCE_AUTOHINT              :: 1 << 5
+LOAD_CROP_BITMAP                 :: 1 << 6
+LOAD_PEDANTIC                    :: 1 << 7
+LOAD_IGNORE_GLOBAL_ADVANCE_WIDTH :: 1 << 9
+LOAD_NO_RECURSE                  :: 1 << 10
+LOAD_IGNORE_TRANSFORM            :: 1 << 11
+LOAD_MONOCHROME                  :: 1 << 12
+LOAD_LINEAR_DESIGN               :: 1 << 13
+LOAD_NO_AUTOHINT                 :: 1 << 15
 // Bits 16-19 are used by `FT_LOAD_TARGET_'
-LOAD_COLOR                       :: 1 << 20;
-LOAD_COMPUTE_METRICS             :: 1 << 21;
-LOAD_BITMAP_METRICS_ONLY         :: 1 << 22;
+LOAD_COLOR                       :: 1 << 20
+LOAD_COMPUTE_METRICS             :: 1 << 21
+LOAD_BITMAP_METRICS_ONLY         :: 1 << 22
 
 
 // used internally only by certain font drivers
-LOAD_ADVANCE_ONLY                :: 1 << 8;
-LOAD_SBITS_ONLY                  :: 1 << 14;
+LOAD_ADVANCE_ONLY                :: 1 << 8
+LOAD_SBITS_ONLY                  :: 1 << 14
 
 
-KERNING_DEFAULT  :: 0;
-KERNING_UNFITTED :: 1;
-KERNING_UNSCALED :: 2;
+KERNING_DEFAULT  :: 0
+KERNING_UNFITTED :: 1
+KERNING_UNSCALED :: 2
 
-TTAG_GSUB :: 0x47535542;
+TTAG_GSUB :: 0x47535542
 
-Error :: distinct c.int;
+Error :: distinct c.int
 
-F26Dot6 :: Long;
+F26Dot6 :: Long
 
-Handle :: struct{rawptr};
+Handle :: struct{rawptr}
 
-Library       :: distinct Handle;
-CharMap       :: ^CharMapRec;
-Size          :: ^SizeRec;
-Face          :: ^FaceRec;
-GlyphSlot     :: ^GlyphSlotRec;
-Face_Internal :: distinct Handle;
-Driver        :: distinct Handle;
-Memory        :: distinct Handle;
-Stream        :: distinct Handle;
-SubGlyph      :: distinct Handle;
-Slot_Internal :: distinct Handle;
-Size_Internal :: distinct Handle;
+Library       :: distinct Handle
+CharMap       :: ^CharMapRec
+Size          :: ^SizeRec
+Face          :: ^FaceRec
+GlyphSlot     :: ^GlyphSlotRec
+Face_Internal :: distinct Handle
+Driver        :: distinct Handle
+Memory        :: distinct Handle
+Stream        :: distinct Handle
+SubGlyph      :: distinct Handle
+Slot_Internal :: distinct Handle
+Size_Internal :: distinct Handle
 
-Generic_Finalizer :: #type proc "c" (object: rawptr);
+Generic_Finalizer :: #type proc "c" (object: rawptr)
 Generic :: struct {
   data: rawptr,
   finalizer: Generic_Finalizer,
 }
 
-Pos :: distinct Long;
-Fixed :: distinct Long;
+Pos :: distinct Long
+Fixed :: distinct Long
 
 
 pos6_to_f32 :: proc(p: Pos) -> f32 {
-  return f32(p >> 6) + f32(p & 0b111111)/64;
+  return f32(p >> 6) + f32(p & 0b111111)/64
 }
 pos6_to_i16 :: proc(p: Pos) -> i16 {
-  return i16(p >> 6);
+  return i16(p >> 6)
 }
 
 
 Vector :: struct{
   x, y: Pos,
-};
+}
 Matrix :: struct{
   xx, xy: Fixed,
   yx, yy: Fixed,
-};
+}
 
 Encoding :: enum u32 {
   NONE = 0,
@@ -221,7 +221,7 @@ Encoding :: enum u32 {
   OLD_LATIN_2 = 'l'<<24 | 'a'<<16 | 't'<<8 | '2',
 
   APPLE_ROMAN = 'a'<<24 | 'r'<<16 | 'm'<<8 | 'n',
-};
+}
 
 Glyph_Format :: enum c.int {
   NONE      = 0,
@@ -316,14 +316,14 @@ Bitmap_Size :: struct {
 
   x_ppem: Pos,
   y_ppem: Pos,
-};
+}
 
 BBox :: struct {
   xMin, yMin: Pos,
   xMax, yMax: Pos,
 }
 
-ListNode :: distinct rawptr;
+ListNode :: distinct rawptr
 
 ListRec :: struct {
   head: ListNode,
@@ -411,14 +411,14 @@ Size_Metrics :: struct {
   descender:   Pos,     /* descender in 26.6 frac. pixels         */
   height:      Pos,     /* text height in 26.6 frac. pixels       */
   max_advance: Pos,     /* max horizontal advance, in 26.6 pixels */
-};
+}
 
 SizeRec :: struct {
   face:     Face,           /* parent face object              */
   generic:  Generic,        /* generic pointer for client uses */
   metrics:  Size_Metrics,   /* size metrics                    */
   internal: Size_Internal,
-};
+}
 
 Render_Mode :: enum Long {
   NORMAL = 0,
