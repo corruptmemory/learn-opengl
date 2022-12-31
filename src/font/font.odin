@@ -33,6 +33,7 @@ Font :: struct {
 
 Rendered_Font :: struct {
 	byte_size:         u32,
+	allocator:         mem.Allocator,
 	font_size:         f32,
 	texture_dims:      Vec2u16,
 	char_height:       i32,
@@ -40,6 +41,8 @@ Rendered_Font :: struct {
 	ascender:          i32,
 	descender:         i32,
 	baseline:          i32,
+	horz_resolution:   u32,
+	vert_resolution:   u32,
 	opengl_texture_id: u32,
 	char_map:          []Char_Struct,
 	bits:              []byte,
@@ -54,11 +57,11 @@ compute_font_size_in_bytes :: proc(max_rendered_font: int) -> int {
 
 in_place_font_init :: proc(
 	memory: rawptr,
+	memsize: u32,
 	max_rendered_font: int,
 	allocator: runtime.Allocator,
 ) -> ^Font {
-	memsize := compute_font_size_in_bytes(max_rendered_font)
-	mem.zero(memory, memsize)
+	mem.zero(memory, auto_cast memsize)
 	result := (^Font)(memory)
 	result.byte_size = u32(memsize)
 	result.allocator = allocator
@@ -71,7 +74,7 @@ in_place_font_init :: proc(
 make_font :: proc(max_rendered_font: int, allocator := context.allocator) -> ^Font {
 	memsize := compute_font_size_in_bytes(max_rendered_font)
 	memory := mem.alloc(memsize, align_of(^Font), allocator)
-	return in_place_font_init(memory, max_rendered_font, allocator)
+	return in_place_font_init(memory, auto_cast memsize, max_rendered_font, allocator)
 }
 
 
@@ -137,6 +140,7 @@ compute_texture_height :: proc(face: ft.Face, texture_width: i32) -> i32 {
 	return texture_height
 }
 
+
 prepare_texture :: proc(face: ft.Face, font_size: f32, texture_width: i32, horz_resolution, vert_resolution: u32) -> ^Rendered_Font {
 	if err := ft.Set_Char_Size(face, 0, ft.F26Dot6(font_size * 64), horz_resolution, vert_resolution); err != 0 do log.fatalf("Failed to set face size: %v", err)
 	texture_height := compute_texture_height(face, texture_width)
@@ -144,9 +148,46 @@ prepare_texture :: proc(face: ft.Face, font_size: f32, texture_width: i32, horz_
 }
 
 
+in_place_rendered_font_init :: proc(face: ft.Face,
+	                      			memory: rawptr,
+									memsize: u32,
+									glyph_count: int,
+									texture_height, texture_width: int,
+									horz_resolution, vert_resolution: u32,
+									font_size: f32,
+									char_height: i32,
+									max_width: i32,
+									ascender: i32,
+									descender: i32,
+									baseline: i32,
+									allocator: runtime.Allocator) -> ^Rendered_Font {
+	mem.zero(memory, auto_cast memsize)
+	result := (^Rendered_Font)(memory)
+	result.byte_size = auto_cast memsize
+	result.font_size = font_size
+	result.texture_dims = Vec2u16{u16(texture_width), u16(texture_height)}
+	result.horz_resolution = horz_resolution
+	result.vert_resolution = vert_resolution
+	result.char_height = char_height
+	result.max_width = max_width
+	result.ascender = ascender
+	result.descender = descender
+	result.baseline = baseline
+	result.allocator = allocator
+	after_start := uintptr(memory)+size_of(Rendered_Font)
+	char_structs := mem.align_forward_uintptr(after_start, 8)
+	after_char_structs := char_structs + uintptr(size_of(Char_Struct) * glyph_count)
+	bits_start := mem.align_forward_uintptr(after_char_structs, 8)
+	result.char_map = mem.slice_ptr((^Char_Struct)(char_structs),glyph_count)
+	result.bits = mem.slice_ptr((^byte)(bits_start),texture_width*texture_height)
+	return result
+}
+
+
 make_renderd_font :: proc(face: ft.Face,
 	                      glyph_count: int,
 	                      texture_height, texture_width: int,
+	                      horz_resolution, vert_resolution: u32,
 	                      font_size: f32,
 	                      char_height: i32,
 						  max_width: i32,
@@ -156,23 +197,19 @@ make_renderd_font :: proc(face: ft.Face,
 						  allocator: runtime.Allocator) -> ^Rendered_Font {
 	sz := compute_rendered_font_size_in_bytes(glyph_count, texture_width, texture_height)
 	bts := mem.alloc(sz, align_of(^Rendered_Font), allocator)
-	mem.zero(bts, sz)
-	result := (^Rendered_Font)(bts)
-	result.byte_size = auto_cast sz
-	result.font_size = font_size
-	result.texture_dims = Vec2u16{u16(texture_width), u16(texture_height)}
-	result.char_height = char_height
-	result.max_width = max_width
-	result.ascender = ascender
-	result.descender = descender
-	result.baseline = baseline
-	after_start := uintptr(bts)+size_of(Rendered_Font)
-	char_structs := mem.align_forward_uintptr(after_start, 8)
-	after_char_structs := char_structs + uintptr(size_of(Char_Struct) * glyph_count)
-	bits_start := mem.align_forward_uintptr(after_char_structs, 8)
-	result.char_map = mem.slice_ptr((^Char_Struct)(char_structs),glyph_count)
-	result.bits = mem.slice_ptr((^byte)(bits_start),texture_width*texture_height)
-	return result
+	return in_place_rendered_font_init(face,
+									   bts,
+									   u32(sz),
+									   glyph_count,
+									   texture_height, texture_width,
+									   horz_resolution, vert_resolution,
+									   font_size,
+									   char_height,
+									   max_width,
+									   ascender,
+									   descender,
+									   baseline,
+									   allocator)
 }
 
 
@@ -188,7 +225,8 @@ compute_rendered_font_size_in_bytes :: proc(glyph_count: int, texture_height, te
 	return base_size + rem + texture_size
 }
 
-render_chars :: proc(face: ft.Face, chars_across: i32) {
+
+render_chars :: proc(rf: ^Rendered_Font, face: ft.Face) {
 	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1) // disable byte-alignment restriction
 
 	texture_rows := 128 / chars_across
