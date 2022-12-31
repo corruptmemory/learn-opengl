@@ -119,6 +119,10 @@ find_open_render_slot :: proc(font: ^Font, target_size: f32) -> int {
 	return open_slot
 }
 
+
+// TODO: Figure out a sensible way to combind this calculation and the rendering
+//       of the font into the texture without having to walk this twice.  This just smells
+//       of bad design.  Which is most certainly is.
 compute_texture_height :: proc(face: ft.Face, texture_width: i32) -> i32 {
 	char_height := i32(face.size.metrics.height >> 6)
 	x: i32
@@ -138,13 +142,6 @@ compute_texture_height :: proc(face: ft.Face, texture_width: i32) -> i32 {
 		}
 	}
 	return texture_height
-}
-
-
-prepare_texture :: proc(face: ft.Face, font_size: f32, texture_width: i32, horz_resolution, vert_resolution: u32) -> ^Rendered_Font {
-	if err := ft.Set_Char_Size(face, 0, ft.F26Dot6(font_size * 64), horz_resolution, vert_resolution); err != 0 do log.fatalf("Failed to set face size: %v", err)
-	texture_height := compute_texture_height(face, texture_width)
-
 }
 
 
@@ -227,28 +224,22 @@ compute_rendered_font_size_in_bytes :: proc(glyph_count: int, texture_height, te
 
 
 render_chars :: proc(rf: ^Rendered_Font, face: ft.Face) {
-	gl.PixelStorei(gl.UNPACK_ALIGNMENT, 1) // disable byte-alignment restriction
+	char_height := rf.char_height
+	max_width := rf.max_width
+	ascender := rf.ascenter
+	descender := rf.descender
+	baseline := rf.baseline
 
-	texture_rows := 128 / chars_across
-	if 128 % chars_across > 0 {
-		texture_rows += 1
-	}
+	texture_width := rf.texture_width
+	texture_height := rf.texture_height
+	bits := rf.bits
 
-	max_height := i32(face.size.metrics.height >> 6)
-	max_width := i32(face.size.metrics.max_advance >> 6)
-	ascender := i32(face.size.metrics.ascender >> 6)
-	descender := abs(i32(face.size.metrics.descender >> 6))
-	baseline := descender - 1
-
-	texture_width = max_width * chars_across
-	texture_height = max_height * texture_rows
-	bits := make([]byte, texture_width * texture_height)
-	defer delete(bits)
-
-	gl.GenTextures(1, &font_texture)
+	// TODO: Descide what we should do with the OpenGL texture generation.  Not sure that we should
+	//       do this right here or do it lazily on demand when we need to use a particular rendered
+	//       font.
 	x, y: i32
 	baseIdx: i32
-	for c: u32 = 0; c < 128; c += 1 {
+	for c: u32 = 0; c < auto_cast len(rf.char_map); c += 1 {
 		if err := ft.Load_Char(face, c, ft.LOAD_RENDER); err != 0 {
 			log.fatalf("Failed to load Glyph: %v", err)
 		}
