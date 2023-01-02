@@ -12,6 +12,7 @@ import "vendor:glfw"
 import gl "vendor:OpenGL"
 import ft "freetype"
 import stb "vendor:stb/image"
+import lft "font"
 
 Vector2i32 :: distinct [2]i32
 
@@ -402,6 +403,13 @@ main :: proc() {
 		os.exit(-1)
 	}
 	defer ft.Done_FreeType(freetype)
+
+	llft := lft.make_font(5)
+	defer lft.delete_font(llft)
+	if err := lft.load_font(llft, freetype, "/usr/share/fonts/source-code-pro/SourceCodePro[wght].ttf"); err != 0 {
+		log.fatalf("Failed to load font: %v", err)
+	}
+	lft.render_font(llft, 36, 92, 92)
 
 	face: ft.Face
 	if err := ft.New_Face(
