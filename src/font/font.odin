@@ -1,17 +1,12 @@
 package font
 
-// import "core:fmt"
 import "core:log"
 import "core:runtime"
-// import "core:os"
 import "core:mem"
-// import "core:c"
-// import "core:math/linalg"
 import "core:math/linalg/glsl"
-// import "vendor:glfw"
 import gl "vendor:OpenGL"
 import ft "../freetype"
-import stb "vendor:stb/image"
+// import stb "vendor:stb/image"
 
 Vec2u16 :: distinct [2]u16
 
@@ -59,8 +54,8 @@ Font :: struct {
 	allocator:           mem.Allocator,
 	max_rendered_font:   int,
 	face:                ft.Face,
-	vertex_shader: u32,
-	fragment_shader: u32,
+	vertex_shader:       u32,
+	fragment_shader:     u32,
 	program:             u32,
 	color_location:      i32,
 	text_location:       i32,
@@ -99,8 +94,8 @@ mat4Ortho3d :: proc "c" (left, right, bottom, top: f32) -> (m: glsl.mat4) {
 	m[0, 0] = +2 / (right - left)
 	m[1, 1] = +2 / (top - bottom)
 	m[2, 2] = 1
-	m[0, 3] = -(right + left)   / (right - left)
-	m[1, 3] = -(top   + bottom) / (top - bottom)
+	m[0, 3] = -(right + left) / (right - left)
+	m[1, 3] = -(top + bottom) / (top - bottom)
 	m[3, 3] = 1
 	return m
 }
@@ -171,7 +166,7 @@ delete_font :: proc(font: ^Font) {
 	assert(font != nil)
 	assert(font.byte_size != 0)
 	for rf in font.rendered_font {
-		delete_rendered_font(rf, font.allocator)
+		if rf != nil do delete_rendered_font(rf, font.allocator)
 	}
 	ft.Done_Face(font.face)
 	allocator := font.allocator
@@ -237,7 +232,7 @@ render_font :: proc(font: ^Font, target_size: f32, horz_resolution, vert_resolut
 compute_texture_height :: proc(face: ft.Face, texture_width: i32) -> (i32, i32) {
 	char_height := i32(face.size.metrics.height >> 6)
 	x: i32
-	char_rows : i32 = 1
+	char_rows: i32 = 1
 	max_width := i32(face.size.metrics.max_advance >> 6)
 
 	for c: i64 = 0; c < face.num_glyphs; c += 1 {
@@ -363,7 +358,7 @@ render_chars :: proc(rf: ^Rendered_Font, face: ft.Face) {
 	// baseline := rf.baseline
 
 	texture_width := i32(rf.texture_dims.x)
-	texture_height := i32(rf.texture_dims.y)
+	// texture_height := i32(rf.texture_dims.y)
 	bits := rf.bits
 
 	// TODO: Descide what we should do with the OpenGL texture generation.  Not sure that we should
@@ -416,15 +411,15 @@ render_chars :: proc(rf: ^Rendered_Font, face: ft.Face) {
 		cm.texture_coord = Vec2u16{u16(x), u16(y)}
 		x += auto_cast cm.size.x
 	}
-	log.info("Starting to write glyphs")
-	stb.write_png(
-		"./glyphs-new.png",
-		texture_width,
-		texture_height,
-		1,
-		mem.raw_data(bits),
-		texture_width,
-	)
+	// log.info("Starting to write glyphs")
+	// stb.write_png(
+	// 	"./glyphs-new.png",
+	// 	texture_width,
+	// 	texture_height,
+	// 	1,
+	// 	mem.raw_data(bits),
+	// 	texture_width,
+	// )
 }
 
 
